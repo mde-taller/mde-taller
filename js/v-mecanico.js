@@ -67,7 +67,7 @@
         id: 'eq.' + id
       }),
       Api.select('registros_tiempo', { select: 'inicio,fin', tarea_id: 'eq.' + id, mecanico_id: 'eq.' + st.usuarioId, order: 'inicio' }),
-      Api.select('repuestos_ot', { select: 'id,codigo,cantidad,cargado_en,repuesto:repuestos(descripcion)', tarea_id: 'eq.' + id, order: 'id' })
+      Api.select('repuestos_ot', { select: 'id,codigo,cantidad,cargado_en,estado,repuesto:repuestos(descripcion)', tarea_id: 'eq.' + id, order: 'id' })
     ]);
     const t = tareas[0];
     if (!t) { main.innerHTML = '<div class="tarjeta">No se encontró la tarea o no está asignada a vos.</div>'; return; }
@@ -132,7 +132,8 @@
         ${repuestos.length ? repuestos.map(r => `
           <div class="repuesto-fila">
             <div class="info"><div class="desc">${esc(r.repuesto ? r.repuesto.descripcion : r.codigo)}</div>
-              <div class="cod">Cód. ${esc(r.codigo)} · Cant. ${num(r.cantidad)}</div></div>
+              <div class="cod">Cód. ${esc(r.codigo)} · Cant. ${num(r.cantidad)}</div>
+              <div style="margin-top:4px">${r.estado === 'ENTREGADO' ? '<span class="chip verde">Entregado</span>' : '<span class="chip ambar">Pendiente de entrega</span>'}</div></div>
             ${editable ? `<button class="btn btn-chico" data-editar="${r.id}" data-cant="${r.cantidad}" aria-label="Modificar cantidad">${ICONOS.lapiz}</button>
               <button class="btn btn-chico btn-peligro" data-quitar="${r.id}" aria-label="Quitar repuesto">Quitar</button>` : ''}
           </div>`).join('') : '<div class="vacio">Todavía no cargaste repuestos en esta tarea.</div>'}
@@ -427,7 +428,7 @@
       b.disabled = true;
       try {
         await Api.insert('repuestos_ot', { ot_id: t.ot_id, tarea_id: t.id, codigo: res.dataset.codigo, cantidad: c });
-        toast(`Cargado: ${res.dataset.descripcion} × ${num(c)}`);
+        toast(`Cargado: ${res.dataset.descripcion} × ${num(c)}. Queda pendiente de entrega.`);
         ir('#/tarea/' + t.id);
       } catch (e) { mostrar(errMsg(e)); b.disabled = false; }
     });

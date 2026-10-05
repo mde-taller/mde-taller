@@ -37,7 +37,7 @@ begin
         'rechazar_solicitud','recordar_tipo_unidad','stock_de','terminar_tarea',
         'tiene_rol','ve_todas_las_ot','tiene_algun_rol','texto_motivo','pausar_ot','reanudar_ot',
         'resolver_pedido_repuesto','avisar_solicitud_ot','aprobar_solicitud_ot','rechazar_solicitud_ot',
-        'buscar_repuestos')
+        'buscar_repuestos','avisar_repuesto_pendiente','entregar_repuestos')
   loop
     execute format('drop function if exists %s cascade', f.firma);
   end loop;

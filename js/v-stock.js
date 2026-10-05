@@ -24,11 +24,15 @@
   let primeraVez = true;
   ruta(/^#\/stock$/, async main => {
     const edita = tiene('DEPOSITO') || esAdmin();
-    const pendientes = await Api.select('pedidos_repuesto', { select: 'id', estado: 'eq.PENDIENTE' });
-    if (!edita && !['buscar', 'movs', 'pedidos'].includes(pestana)) pestana = 'buscar';
-    if (primeraVez && pendientes.length) pestana = 'pedidos';
+    const [pendientes, aEntregar] = await Promise.all([
+      Api.select('pedidos_repuesto', { select: 'id', estado: 'eq.PENDIENTE' }),
+      Api.select('repuestos_ot', { select: 'id', estado: 'eq.PENDIENTE' })]);
+    if (!edita && !['buscar', 'movs', 'pedidos', 'entregar'].includes(pestana)) pestana = 'buscar';
+    if (primeraVez && aEntregar.length) pestana = 'entregar';
+    else if (primeraVez && pendientes.length) pestana = 'pedidos';
     primeraVez = false;
-    const tabs = [['buscar', 'Buscar stock'], ['pedidos', `Pedidos de repuestos${pendientes.length ? ' (' + pendientes.length + ')' : ''}`]]
+    const tabs = [['buscar', 'Buscar stock'], ['entregar', `Repuestos a entregar${aEntregar.length ? ' (' + aEntregar.length + ')' : ''}`],
+                  ['pedidos', `Pedidos de repuestos${pendientes.length ? ' (' + pendientes.length + ')' : ''}`]]
       .concat(edita ? [['lote', 'Ingreso por lote'], ['ajuste', 'Ajuste o stock inicial'], ['nuevo', 'Nuevo repuesto']] : [])
       .concat([['movs', 'Movimientos']]);
     main.innerHTML = `
@@ -145,6 +149,42 @@
           lote = [{ codigo: '', cantidad: '', obs: '' }]; loteRevisado = false; loteObsGeneral = '';
           pestana = 'movs'; navegar();
         } catch (e) { toast(errMsg(e), 'error'); b.disabled = false; }
+      });
+    }
+
+    // ---- Repuestos cargados en OT pendientes de entrega ----
+    if (pestana === 'entregar') {
+      const filas = await Api.select('repuestos_ot', {
+        select: 'id,codigo,cantidad,cargado_en,repuesto:repuestos(descripcion),ot:ordenes_trabajo(id,numero,unidad:unidades(dominio,interno)),' +
+                'tarea:tareas_ot(renglon,descripcion),cargador:usuarios!repuestos_ot_cargado_por_fkey(nombre)',
+        estado: 'eq.PENDIENTE', order: 'cargado_en', limit: 300 });
+      cont.innerHTML = `
+        <p class="nota" style="margin-top:0">Repuestos cargados en las OT que todavía no se entregaron. El stock ya está descontado. Al marcarlos entregados, le llega el aviso a quien los cargó.</p>
+        ${filas.length && edita ? `<div class="acciones" style="margin-bottom:10px">
+          <label class="check"><input type="checkbox" id="e-todos"> Seleccionar todos</label>
+          <button class="btn btn-verde" data-accion="entregar" disabled>Marcar entregados</button></div>` : ''}
+        <div class="tabla-caja"><table><thead><tr>${edita ? '<th></th>' : ''}<th>Cargado</th><th>OT</th><th>Repuesto</th><th class="num">Cant.</th><th>Tarea</th><th>Cargó</th></tr></thead><tbody>
+          ${filas.map(r => `<tr>${edita ? `<td><label class="check"><input type="checkbox" data-sel="${r.id}" aria-label="Seleccionar ${esc(r.codigo)}"></label></td>` : ''}
+            <td>${fechaHora(r.cargado_en)}</td>
+            <td>${r.ot ? `<a href="#/ot/${r.ot.id}">${esc(nroOT(r.ot.numero))}</a><div class="nota">${esc(r.ot.unidad ? r.ot.unidad.dominio + (r.ot.unidad.interno ? ' · INT ' + r.ot.unidad.interno : '') : '')}</div>` : ''}</td>
+            <td><b>${esc(r.repuesto ? r.repuesto.descripcion : '')}</b><div class="nota">${esc(r.codigo)}</div></td>
+            <td class="num">${num(r.cantidad)}</td>
+            <td>${r.tarea ? '#' + r.tarea.renglon + ' ' + esc(r.tarea.descripcion) : '—'}</td>
+            <td>${esc(r.cargador ? r.cargador.nombre : '')}</td></tr>`).join('')
+            || `<tr><td colspan="7" class="vacio">No hay repuestos pendientes de entrega.</td></tr>`}
+        </tbody></table></div>`;
+      const boton = cont.querySelector('[data-accion=entregar]');
+      const actualizar = () => {
+        const n = cont.querySelectorAll('[data-sel]:checked').length;
+        if (boton) { boton.disabled = !n; boton.textContent = n ? `Marcar entregados (${n})` : 'Marcar entregados'; }
+      };
+      on(cont, 'change', '[data-sel]', actualizar);
+      on(cont, 'change', '#e-todos', (ev, cb) => { cont.querySelectorAll('[data-sel]').forEach(x => { x.checked = cb.checked; }); actualizar(); });
+      if (boton) boton.addEventListener('click', async () => {
+        const ids = [...cont.querySelectorAll('[data-sel]:checked')].map(x => Number(x.dataset.sel));
+        boton.disabled = true;
+        try { const n = await Api.rpc('entregar_repuestos', { p_ids: ids }); toast(`${n} repuesto${n === 1 ? '' : 's'} entregado${n === 1 ? '' : 's'}`); navegar(); }
+        catch (e) { toast(errMsg(e), 'error'); boton.disabled = false; }
       });
     }
 

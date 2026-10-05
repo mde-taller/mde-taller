@@ -446,7 +446,7 @@
                                       id: 'eq.' + id }),
       Api.select('tareas_ot', { select: 'id,renglon,descripcion,horas,cantidad,horas_total,estado,tempario(categoria:categorias_tempario(nombre)),asignaciones(mecanico_id,terminada_en,usuario:usuarios(nombre))',
                                 ot_id: 'eq.' + id, order: 'renglon' }),
-      Api.select('repuestos_ot', { select: 'id,codigo,cantidad,tarea_id,cargado_en,repuesto:repuestos(descripcion),cargador:usuarios!repuestos_ot_cargado_por_fkey(nombre)',
+      Api.select('repuestos_ot', { select: 'id,codigo,cantidad,tarea_id,cargado_en,estado,entregado_en,repuesto:repuestos(descripcion),cargador:usuarios!repuestos_ot_cargado_por_fkey(nombre),entregador:usuarios!repuestos_ot_entregado_por_fkey(nombre)',
                                    ot_id: 'eq.' + id, order: 'id' })
     ]);
     return { ot: ots[0], tareas, reps };
@@ -463,6 +463,8 @@
       Api.select('pedidos_repuesto', { select: 'id,descripcion,codigo,cantidad,estado,nota,creado_en,pedidor:usuarios!pedidos_repuesto_pedido_por_fkey(nombre)', ot_id: 'eq.' + id, order: 'creado_en.desc' })
     ]);
     const u = ot.unidad || {};
+    const entrega = App.tiene('DEPOSITO') || esAdmin();
+    const pendientesEntrega = reps.filter(r => r.estado !== 'ENTREGADO');
     const pausa = pausaAbierta(ot);
     const pausasViejas = (ot.pausas || []).filter(p => p.fin).sort((a, b) => new Date(b.inicio) - new Date(a.inicio));
     const totalHoras = tareas.reduce((a, t) => a + Number(t.horas_total || 0), 0);
@@ -519,12 +521,17 @@
               <input id="o-tarea-cant" value="1" inputmode="decimal" aria-label="Cantidad" title="Cantidad" style="flex:0 0 80px;text-align:center">
               <button class="btn" type="submit">Agregar</button></form>` : ''}
           </section>
-          <section class="tarjeta"><h2>Repuestos</h2>
-            <div class="tabla-caja"><table><thead><tr><th>Código</th><th>Repuesto</th><th class="num">Cantidad</th><th>Tarea</th><th>Cargó</th>${puede ? '<th></th>' : ''}</tr></thead><tbody>
+          <section class="tarjeta">
+            <div class="encabezado" style="margin-bottom:10px"><h2>Repuestos</h2>
+              ${entrega && pendientesEntrega.length ? `<button class="btn btn-verde btn-chico" data-entregar-todos>Marcar entregados (${pendientesEntrega.length})</button>` : ''}</div>
+            <div class="tabla-caja"><table><thead><tr><th>Código</th><th>Repuesto</th><th class="num">Cantidad</th><th>Tarea</th><th>Cargó</th><th>Entrega</th>${puede ? '<th></th>' : ''}</tr></thead><tbody>
               ${reps.length ? reps.map(r => `<tr><td>${esc(r.codigo)}</td><td>${esc(r.repuesto ? r.repuesto.descripcion : '')}</td><td class="num">${num(r.cantidad)}</td>
                 <td>${r.tarea_id ? '#' + renglonDe.get(r.tarea_id) : '—'}</td><td>${esc(r.cargador ? r.cargador.nombre : '')}<div class="nota">${fechaHora(r.cargado_en)}</div></td>
+                <td>${r.estado === 'ENTREGADO'
+                  ? `<span class="chip verde">Entregado</span><div class="nota">${esc(r.entregador ? r.entregador.nombre : '')} ${fechaHora(r.entregado_en)}</div>`
+                  : `<span class="chip ambar">Pendiente</span>${entrega ? ` <button class="btn-texto" data-entregar="${r.id}">Entregar</button>` : ''}`}</td>
                 ${puede ? `<td><button class="btn-texto" data-quitar-rep="${r.id}">Quitar</button></td>` : ''}</tr>`).join('')
-                : `<tr><td colspan="6" class="vacio">Sin repuestos cargados.</td></tr>`}
+                : `<tr><td colspan="7" class="vacio">Sin repuestos cargados.</td></tr>`}
             </tbody></table></div>
             ${puede ? `<form id="f-agregar-rep" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
               <input id="o-rep-cod" placeholder="Código o descripción" style="flex:2 1 220px">
@@ -570,6 +577,14 @@
           </section>
         </div>
       </div>`;
+
+    // Entrega de repuestos: Depósito o Administrador.
+    const entregar = async ids => {
+      try { const n = await Api.rpc('entregar_repuestos', { p_ids: ids }); toast(n === 1 ? 'Repuesto entregado' : `${n} repuestos entregados`); navegar(); }
+      catch (e) { toast(errMsg(e), 'error'); }
+    };
+    on(main, 'click', '[data-entregar]', (ev, b) => entregar([Number(b.dataset.entregar)]));
+    on(main, 'click', '[data-entregar-todos]', () => entregar(pendientesEntrega.map(r => r.id)));
 
     if (!puede) return;
     const recargar = () => navegar();
