@@ -40,6 +40,12 @@ window.App = (() => {
   const ESTADOS_OT = ['ABIERTA', 'EN DIAGNÓSTICO', 'EN REPARACIÓN', 'ESPERANDO REPUESTOS', 'FINALIZADA', 'CERRADA', 'PRUEBA'];
   const TIPOS = ['LIVIANA', 'PESADA', 'MINIBÚS'];
   const ROLES = [['ADMINISTRADOR', 'Administrador'], ['OFICINA', 'Oficina'], ['DEPOSITO', 'Depósito'], ['MECANICO', 'Mecánico']];
+  const MOTIVOS = [['FALTA DE REPUESTO', 'Falta de repuesto'], ['ESPERA DEL CLIENTE', 'Espera del cliente'],
+                   ['FIN DE JORNADA', 'Fin de jornada'], ['TRABAJO EXTERNO', 'Trabajo externo'], ['OTRO', 'Otro']];
+  const textoMotivo = m => (MOTIVOS.find(x => x[0] === m) || [m, m])[1];
+  // Pausa abierta de una OT (las pausas vienen embebidas en la consulta de la OT)
+  const pausaAbierta = ot => ot && Array.isArray(ot.pausas) ? ot.pausas.find(p => !p.fin) || null : null;
+  const chipPausa = p => p ? `<span class="chip rojo">Pausada · ${esc(textoMotivo(p.motivo))}</span>` : '';
 
   function chipEstadoOT(e) {
     const c = { 'ABIERTA': '', 'EN DIAGNÓSTICO': 'ambar', 'EN REPARACIÓN': 'azul', 'ESPERANDO REPUESTOS': 'ambar',
@@ -145,6 +151,109 @@ window.App = (() => {
   }
   const confirmar = (mensaje, opciones) => modal(Object.assign({ titulo: 'Confirmar', html: `<p>${esc(mensaje)}</p>` }, opciones || {}));
 
+  // ---------------- Buscador desplegable de repuestos ----------------
+  // Mientras se escribe el código o la descripción, muestra los repuestos que coinciden.
+  // alElegir(repuesto) recibe { codigo, descripcion, disponible }.
+  let acContador = 0;
+  function resaltar(texto, buscado) {
+    const t = String(texto || '');
+    const b = String(buscado || '').trim();
+    if (!b) return esc(t);
+    const palabras = b.split(/\s+/).filter(Boolean).map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    if (!palabras.length) return esc(t);
+    const re = new RegExp('(' + palabras.join('|') + ')', 'ig');
+    return t.split(re).map((parte, i) => i % 2 ? `<mark>${esc(parte)}</mark>` : esc(parte)).join('');
+  }
+  function resaltarCodigo(codigo, buscado) {
+    const limpio = String(buscado || '').replace(/\s+/g, '').toUpperCase();
+    const c = String(codigo || '');
+    if (!limpio) return esc(c);
+    // Ubica la coincidencia ignorando espacios del código
+    const mapa = []; let sinEsp = '';
+    for (let i = 0; i < c.length; i++) if (!/\s/.test(c[i])) { mapa.push(i); sinEsp += c[i].toUpperCase(); }
+    const p = sinEsp.indexOf(limpio);
+    if (p < 0) return esc(c);
+    const ini = mapa[p], fin = mapa[p + limpio.length - 1] + 1;
+    return esc(c.slice(0, ini)) + '<mark>' + esc(c.slice(ini, fin)) + '</mark>' + esc(c.slice(fin));
+  }
+  function autocompletarRepuesto(input, { alElegir, alEscribir } = {}) {
+    const id = 'ac-' + (++acContador);
+    const caja = document.createElement('div');
+    caja.className = 'ac-caja';
+    input.parentNode.insertBefore(caja, input);
+    caja.appendChild(input);
+    const lista = document.createElement('ul');
+    lista.className = 'ac-lista oculto';
+    lista.id = id;
+    lista.setAttribute('role', 'listbox');
+    caja.appendChild(lista);
+    input.setAttribute('autocomplete', 'off');
+    input.setAttribute('role', 'combobox');
+    input.setAttribute('aria-autocomplete', 'list');
+    input.setAttribute('aria-controls', id);
+    input.setAttribute('aria-expanded', 'false');
+    let items = [], activo = -1, timer = null, consulta = 0, buscado = '';
+
+    const cerrar = () => { lista.classList.add('oculto'); input.setAttribute('aria-expanded', 'false'); activo = -1; };
+    const marcar = i => {
+      activo = i;
+      lista.querySelectorAll('li[data-i]').forEach(li => li.setAttribute('aria-selected', String(Number(li.dataset.i) === i)));
+      const li = lista.querySelector(`li[data-i="${i}"]`);
+      if (li) { li.scrollIntoView({ block: 'nearest' }); input.setAttribute('aria-activedescendant', li.id); }
+    };
+    const pintar = () => {
+      if (!items.length) {
+        lista.innerHTML = `<li class="ac-vacio">No hay repuestos con "${esc(buscado)}"</li>`;
+      } else {
+        lista.innerHTML = items.map((r, i) => `<li role="option" id="${id}-${i}" data-i="${i}" aria-selected="false">
+          <span class="ac-cod">${resaltarCodigo(r.codigo, buscado)}</span>
+          <span class="ac-desc">${resaltar(r.descripcion, buscado)}</span>
+          <span class="ac-stock ${Number(r.disponible) > 0 ? 'hay' : ''}">Stock ${num(r.disponible)}</span></li>`).join('');
+      }
+      lista.classList.remove('oculto');
+      input.setAttribute('aria-expanded', 'true');
+      activo = -1;
+    };
+    const elegir = i => {
+      const r = items[i];
+      if (!r) return;
+      input.value = r.codigo;
+      cerrar();
+      if (alElegir) alElegir(r);
+    };
+    const buscar = async () => {
+      buscado = input.value.trim();
+      if (buscado.length < 2) { cerrar(); return; }
+      const n = ++consulta;
+      try {
+        const r = await Api.rpc('buscar_repuestos', { p_texto: buscado, p_limite: 12 });
+        if (n !== consulta || document.activeElement !== input) return;
+        items = r || [];
+        pintar();
+      } catch (e) { /* sin conexión: se ignora */ }
+    };
+    input.addEventListener('input', () => {
+      clearTimeout(timer);
+      timer = setTimeout(buscar, 220);
+      if (alEscribir) alEscribir(input.value);
+    });
+    input.addEventListener('focus', () => { if (input.value.trim().length >= 2 && items.length) pintar(); });
+    input.addEventListener('keydown', ev => {
+      const abierta = !lista.classList.contains('oculto') && items.length;
+      if (ev.key === 'ArrowDown' && abierta) { ev.preventDefault(); marcar(Math.min(activo + 1, items.length - 1)); }
+      else if (ev.key === 'ArrowUp' && abierta) { ev.preventDefault(); marcar(Math.max(activo - 1, 0)); }
+      else if (ev.key === 'Enter' && abierta && activo >= 0) { ev.preventDefault(); ev.stopPropagation(); elegir(activo); }
+      else if (ev.key === 'Escape' && !lista.classList.contains('oculto')) { ev.stopPropagation(); cerrar(); }
+    });
+    lista.addEventListener('pointerdown', ev => {
+      const li = ev.target.closest('li[data-i]');
+      ev.preventDefault();
+      if (li) elegir(Number(li.dataset.i));
+    });
+    input.addEventListener('blur', () => setTimeout(cerrar, 120));
+    return { cerrar, limpiar: () => { input.value = ''; items = []; cerrar(); } };
+  }
+
   // ---------------- Estructura ----------------
   const ICONOS = {
     menu: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg>',
@@ -152,6 +261,8 @@ window.App = (() => {
     lista: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/></svg>',
     escanear: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7V4h3M21 7V4h-3M3 17v3h3M21 17v3h-3M7 8v8M10 8v8M13 8v8M17 8v8"/></svg>',
     pedido: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>',
+    solicitudes: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 4h8l4 4v12H4V4h4M8 4v4h8M8 13h8M8 17h5"/></svg>',
+    pausa: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5v14M15 5v14"/></svg>',
     atras: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>',
     lapiz: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h4L19 9l-4-4L4 16v4z"/></svg>'
   };
@@ -161,6 +272,7 @@ window.App = (() => {
     if (tiene('MECANICO')) {
       items.push(['grupo', 'Mecánico']);
       items.push(['#/tareas', 'Mis tareas']);
+      items.push(['#/pedir-ot', 'Pedir OT nueva']);
       items.push(['#/mis-solicitudes', 'Mis solicitudes']);
     }
     if (veTodas()) {
@@ -204,7 +316,8 @@ window.App = (() => {
       </div>
       <nav class="inferior" aria-label="Accesos rápidos">
         <a href="#/tareas">${ICONOS.lista}Tareas</a>
-        <a href="#/mis-solicitudes">${ICONOS.pedido}Solicitudes</a>
+        <a href="#/pedir-ot">${ICONOS.pedido}Pedir OT</a>
+        <a href="#/mis-solicitudes">${ICONOS.solicitudes}Solicitudes</a>
         <a href="#/avisos">${ICONOS.campana}Avisos<span class="badge oculto" id="badge-inf"></span></a>
       </nav>`;
     if (soloMecanico) document.getElementById('btn-menu').classList.add('oculto');
@@ -217,10 +330,10 @@ window.App = (() => {
 
   function marcarActivo(hash) {
     const base = '#/' + (hash.split('/')[1] || '');
+    const alias = { '#/tarea': '#/tareas', '#/escanear': '#/tareas', '#/pausar': '#/tareas', '#/solicitar': '#/tareas',
+                    '#/ot': '#/ots', '#/imprimir': '#/ots', '#/solicitud-ot': '#/solicitudes' };
     document.querySelectorAll('.lateral a, .inferior a').forEach(a => {
-      const ah = a.getAttribute('href');
-      a.classList.toggle('activo', ah === base || (base === '#/tarea' && ah === '#/tareas') ||
-        (base === '#/ot' && ah === '#/ots') || (base === '#/imprimir' && ah === '#/ots'));
+      a.classList.toggle('activo', a.getAttribute('href') === (alias[base] || base));
     });
   }
 
@@ -390,6 +503,7 @@ window.App = (() => {
   return {
     st, cfg, esc, num, parseNum, nroOT, fecha, fechaHora, hoyISO, horaActual, duracion, tiene, esAdmin, esOficina,
     veTodas, limpiarCodigo, chipEstadoOT, chipEstadoTarea, errMsg, toast, modal, confirmar, ICONOS, ESTADOS_OT,
-    TIPOS, ROLES, ruta, ir, on, navegar, actualizarAvisos, arrancar
+    TIPOS, ROLES, MOTIVOS, textoMotivo, pausaAbierta, chipPausa, autocompletarRepuesto,
+    ruta, ir, on, navegar, actualizarAvisos, arrancar
   };
 })();

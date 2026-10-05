@@ -263,7 +263,7 @@
       ev.preventDefault(); rDesde = document.getElementById('r-desde').value; rHasta = document.getElementById('r-hasta').value; navegar(); });
 
     const ots = await Api.select('ordenes_trabajo', {
-      select: 'id,numero,estado,cliente:clientes(nombre),tareas:tareas_ot(id,horas,estado)',
+      select: 'id,numero,estado,cliente:clientes(nombre),tareas:tareas_ot(id,horas_total,estado)',
       and: `(fecha_ingreso.gte.${rDesde},fecha_ingreso.lte.${rHasta})`, estado: 'neq.PRUEBA', order: 'numero' });
     const otIds = ots.map(o => o.id);
     const tareas = ots.flatMap(o => (o.tareas || []).map(t => Object.assign({ ot: o }, t)));
@@ -273,7 +273,7 @@
       porPartes(tareas.map(t => t.id), ids => Api.select('asignaciones', { select: 'tarea_id,mecanico_id,terminada_en,usuario:usuarios(nombre)', tarea_id: `in.(${ids.join(',')})` }))
     ]);
 
-    const totalHoras = tareas.reduce((a, t) => a + Number(t.horas || 0), 0);
+    const totalHoras = tareas.reduce((a, t) => a + Number(t.horas_total || 0), 0);
     const porEstado = {};
     for (const o of ots) porEstado[o.estado] = (porEstado[o.estado] || 0) + 1;
 
@@ -281,13 +281,13 @@
     for (const o of ots) {
       const k = o.cliente ? o.cliente.nombre : '—';
       const c = clientes[k] = clientes[k] || { ots: 0, horas: 0, tareas: 0, hechas: 0 };
-      c.ots++; for (const t of o.tareas || []) { c.horas += Number(t.horas || 0); c.tareas++; if (t.estado === 'HECHA') c.hechas++; }
+      c.ots++; for (const t of o.tareas || []) { c.horas += Number(t.horas_total || 0); c.tareas++; if (t.estado === 'HECHA') c.hechas++; }
     }
     const mecs = {};
     for (const a of asig) {
       const m = mecs[a.mecanico_id] = mecs[a.mecanico_id] || { nombre: a.usuario ? a.usuario.nombre : '', asignadas: 0, terminadas: 0, horasTemp: 0, horasReal: 0 };
       m.asignadas++; if (a.terminada_en) m.terminadas++;
-      const t = tareaPorId.get(a.tarea_id); if (t) m.horasTemp += Number(t.horas || 0);
+      const t = tareaPorId.get(a.tarea_id); if (t) m.horasTemp += Number(t.horas_total || 0);
     }
     for (const r of reales) {
       const m = mecs[r.mecanico_id] = mecs[r.mecanico_id] || { nombre: r.mecanico, asignadas: 0, terminadas: 0, horasTemp: 0, horasReal: 0 };

@@ -1,8 +1,8 @@
-// MDE · Taller — pantallas de oficina: órdenes de trabajo, solicitudes, clientes y unidades.
+// MDE · Taller — pantallas de oficina: órdenes de trabajo, solicitudes e impresión.
 (() => {
   const { st, cfg, esc, num, parseNum, nroOT, fecha, fechaHora, hoyISO, horaActual, esAdmin, esOficina,
           chipEstadoOT, chipEstadoTarea, errMsg, toast, modal, confirmar, ICONOS, ESTADOS_OT, TIPOS,
-          ruta, ir, on, navegar } = App;
+          textoMotivo, pausaAbierta, chipPausa, autocompletarRepuesto, ruta, ir, on, navegar } = App;
 
   const cacheTempario = {};
   async function tempario(tipo) {
@@ -13,18 +13,21 @@
     return cacheTempario[tipo];
   }
   const claveTarea = x => `${x.tarea} · ${x.categoria ? x.categoria.nombre : ''}`;
+  const buscarEnTempario = (lista, texto) => lista.find(y => claveTarea(y) === texto)
+    || lista.filter(y => y.tarea.toUpperCase() === texto.toUpperCase()).find((y, i, arr) => arr.length === 1);
   async function mecanicos() {
     const filas = await Api.select('usuario_roles', { select: 'usuario_id,usuario:usuarios(nombre,activo)', rol: 'eq.MECANICO' });
     return filas.filter(f => f.usuario && f.usuario.activo).map(f => ({ id: f.usuario_id, nombre: f.usuario.nombre }))
       .sort((a, b) => a.nombre.localeCompare(b.nombre));
   }
+  const hora = d => d ? new Date(d).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
 
   // Pide horas para una tarea escrita a mano.
   async function pedirTareaAMano(texto) {
     const v = await modal({ titulo: 'Tarea escrita a mano', textoOk: 'Agregar',
-      html: '<p class="nota">No está en el tempario de este tipo de unidad. Se agrega con las horas que indiques.</p>',
+      html: '<p class="nota">No está en el tempario de este tipo de unidad. Se agrega con las horas que indiques (por unidad).</p>',
       campos: [{ id: 'desc', label: 'Tarea', valor: texto, obligatorio: true },
-               { id: 'horas', label: 'Horas', valor: '', inputmode: 'decimal', obligatorio: true }] });
+               { id: 'horas', label: 'Horas por unidad', valor: '', inputmode: 'decimal', obligatorio: true }] });
     if (!v) return null;
     const h = parseNum(v.horas);
     if (!(h >= 0)) { toast('Las horas no son válidas', 'error'); return null; }
@@ -34,7 +37,7 @@
   // ---------------- Lista de OT ----------------
   let filtroEstado = 'activas', filtroTexto = '';
   ruta(/^#\/ots$/, async main => {
-    const params = { select: 'id,numero,estado,fecha_ingreso,tipo,km,unidad:unidades(dominio,interno),cliente:clientes(nombre),tareas:tareas_ot(estado)',
+    const params = { select: 'id,numero,estado,fecha_ingreso,tipo,km,unidad:unidades(dominio,interno),cliente:clientes(nombre),tareas:tareas_ot(estado),pausas:pausas_ot(motivo,fin)',
                      order: 'numero.desc', limit: 300 };
     if (filtroEstado === 'activas') params.estado = 'not.in.(CERRADA,PRUEBA)';
     else if (filtroEstado !== 'todas') params.estado = 'eq.' + filtroEstado;
@@ -61,7 +64,7 @@
         const tot = (o.tareas || []).length, hechas = (o.tareas || []).filter(t => t.estado === 'HECHA').length;
         return `<tr class="clic" data-ot="${o.id}"><td><b>${esc(nroOT(o.numero))}</b></td><td>${fecha(o.fecha_ingreso)}</td>
           <td>${esc(o.cliente ? o.cliente.nombre : '')}</td><td>${esc(o.unidad ? o.unidad.dominio : '')}${o.unidad && o.unidad.interno ? ' · ' + esc(o.unidad.interno) : ''}</td>
-          <td>${esc(o.tipo)}</td><td>${chipEstadoOT(o.estado)}</td><td>${hechas}/${tot}</td></tr>`;
+          <td>${esc(o.tipo)}</td><td>${chipEstadoOT(o.estado)} ${chipPausa(pausaAbierta(o))}</td><td>${hechas}/${tot}</td></tr>`;
       }).join('') : '<tr><td colspan="7" class="vacio">No hay OT para mostrar.</td></tr>';
     };
     pintar();
@@ -100,17 +103,18 @@
             <div class="campo"><label for="n-obs">Observaciones</label><textarea id="n-obs"></textarea></div>
           </section>
           <section class="tarjeta"><h2>Trabajos y servicios</h2>
-            <form id="f-tarea" style="display:flex;gap:8px;margin-bottom:8px">
-              <input id="n-buscar-tarea" list="dl-tareas" placeholder="Elegí primero el tipo de unidad" autocomplete="off" disabled>
+            <form id="f-tarea" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+              <input id="n-buscar-tarea" list="dl-tareas" placeholder="Elegí primero el tipo de unidad" autocomplete="off" disabled style="flex:3 1 260px">
               <datalist id="dl-tareas"></datalist>
+              <input id="n-tarea-cant" value="1" inputmode="decimal" aria-label="Cantidad" title="Cantidad" style="flex:0 0 80px;text-align:center">
               <button class="btn" type="submit">Agregar</button></form>
-            <div class="nota" style="margin-bottom:10px">Buscá por nombre en el tempario. Si no está, se agrega como tarea a mano.</div>
-            <div class="tabla-caja"><table><thead><tr><th>#</th><th>Tarea</th><th class="num">Horas</th><th></th></tr></thead><tbody id="n-tareas"></tbody></table></div>
+            <div class="nota" style="margin-bottom:10px">Buscá por nombre en el tempario. Si no está, se agrega como tarea a mano. La cantidad multiplica las horas (ej. 2 lados).</div>
+            <div class="tabla-caja"><table><thead><tr><th>#</th><th>Tarea</th><th class="num">Cant.</th><th class="num">Hs c/u</th><th class="num">Hs total</th><th></th></tr></thead><tbody id="n-tareas"></tbody></table></div>
           </section>
           <section class="tarjeta"><h2>Repuestos <span class="nota">(opcional; los mecánicos también los cargan)</span></h2>
             <form id="f-rep" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
-              <input id="n-rep-cod" placeholder="Código" style="flex:2 1 160px" autocomplete="off">
-              <input id="n-rep-cant" placeholder="Cantidad" inputmode="decimal" style="flex:1 1 90px" autocomplete="off">
+              <input id="n-rep-cod" placeholder="Código o descripción" style="flex:2 1 220px">
+              <input id="n-rep-cant" placeholder="Cantidad" inputmode="decimal" style="flex:0 1 110px" autocomplete="off">
               <button class="btn" type="submit">Agregar</button></form>
             <div class="tabla-caja"><table><thead><tr><th>Código</th><th>Repuesto</th><th class="num">Cantidad</th><th class="num">Stock</th><th></th></tr></thead><tbody id="n-reps"></tbody></table></div>
           </section>
@@ -128,7 +132,7 @@
 
     const $ = id => document.getElementById(id);
     const pintarResumen = () => {
-      const horas = s.tareas.reduce((a, t) => a + Number(t.horas || 0), 0);
+      const horas = s.tareas.reduce((a, t) => a + Number(t.horas || 0) * Number(t.cantidad || 1), 0);
       $('n-resumen').innerHTML = `
         <div class="dato"><div class="et">Trabajos</div><div class="va">${s.tareas.length}</div></div>
         <div class="dato"><div class="et">Total horas</div><div class="va">${num(horas)} h</div></div>
@@ -137,8 +141,10 @@
     const pintarTareas = () => {
       $('n-tareas').innerHTML = s.tareas.length ? s.tareas.map((t, i) => `<tr><td>${i + 1}</td>
         <td>${esc(t.descripcion)}${t.categoria ? `<div class="nota">${esc(t.categoria)}</div>` : '<div class="nota">A mano</div>'}</td>
-        <td class="num">${num(t.horas)}</td><td><button class="btn-texto" data-quitar-t="${i}">Quitar</button></td></tr>`).join('')
-        : '<tr><td colspan="4" class="vacio">Sin trabajos todavía.</td></tr>';
+        <td class="num"><input class="cant-input" data-cant-t="${i}" value="${String(t.cantidad).replace('.', ',')}" inputmode="decimal" aria-label="Cantidad de ${esc(t.descripcion)}"></td>
+        <td class="num">${num(t.horas)}</td><td class="num" data-total-t="${i}">${num(t.horas * t.cantidad)}</td>
+        <td><button class="btn-texto" data-quitar-t="${i}">Quitar</button></td></tr>`).join('')
+        : '<tr><td colspan="6" class="vacio">Sin trabajos todavía.</td></tr>';
       pintarResumen();
     };
     const pintarReps = () => {
@@ -173,7 +179,7 @@
         <div class="dato"><div class="et">INT</div><div class="va">${esc(u.interno || '—')}</div></div>
         <div class="dato"><div class="et">Chasis</div><div class="va">${esc(u.chasis || '—')}</div></div>
         <div class="dato"><div class="et">Marca y modelo</div><div class="va">${esc([u.marca && u.marca.nombre, u.modelo && u.modelo.nombre].filter(Boolean).join(' ') || '—')}</div></div>` : '';
-      if (u && u.tipo) { $('n-tipo').value = u.tipo; s.tipo = u.tipo; await cargarTempario(); }
+      if (u && u.tipo && !s.tareas.some(t => t.tempario_id)) { $('n-tipo').value = u.tipo; s.tipo = u.tipo; await cargarTempario(); }
     });
     $('n-tipo').addEventListener('change', async ev => {
       if (s.tareas.some(t => t.tempario_id) && ev.target.value !== s.tipo) {
@@ -186,25 +192,33 @@
     $('f-tarea').addEventListener('submit', async ev => {
       ev.preventDefault();
       const texto = $('n-buscar-tarea').value.trim();
+      const cant = parseNum($('n-tarea-cant').value);
       if (!texto) return;
-      const lista = await tempario(s.tipo);
-      const x = lista.find(y => claveTarea(y) === texto) || lista.filter(y => y.tarea.toUpperCase() === texto.toUpperCase()).find((y, i, arr) => arr.length === 1);
-      if (x) s.tareas.push({ tempario_id: x.id, descripcion: x.tarea, horas: Number(x.horas), categoria: x.categoria ? x.categoria.nombre : '' });
-      else { const m = await pedirTareaAMano(texto); if (!m) return; s.tareas.push(m); }
-      $('n-buscar-tarea').value = ''; pintarTareas(); $('n-buscar-tarea').focus();
+      if (!(cant > 0)) return toast('La cantidad tiene que ser mayor a cero', 'error');
+      const x = buscarEnTempario(await tempario(s.tipo), texto);
+      if (x) s.tareas.push({ tempario_id: x.id, descripcion: x.tarea, horas: Number(x.horas), cantidad: cant, categoria: x.categoria ? x.categoria.nombre : '' });
+      else { const m = await pedirTareaAMano(texto); if (!m) return; s.tareas.push(Object.assign(m, { cantidad: cant })); }
+      $('n-buscar-tarea').value = ''; $('n-tarea-cant').value = '1'; pintarTareas(); $('n-buscar-tarea').focus();
     });
+    on(main, 'input', '[data-cant-t]', (ev, inp) => {
+      const i = Number(inp.dataset.cantT), c = parseNum(inp.value);
+      if (c > 0) { s.tareas[i].cantidad = c; main.querySelector(`[data-total-t="${i}"]`).textContent = num(s.tareas[i].horas * c); pintarResumen(); }
+    });
+    let repElegido = null;
+    autocompletarRepuesto($('n-rep-cod'), { alElegir: r => { repElegido = r; $('n-rep-cant').focus(); },
+                                           alEscribir: () => { repElegido = null; } });
     $('f-rep').addEventListener('submit', async ev => {
       ev.preventDefault();
       const cod = $('n-rep-cod').value.trim(), cant = parseNum($('n-rep-cant').value);
       if (!cod) return;
       if (!(cant > 0)) return toast('Indicá una cantidad mayor a cero', 'error');
       try {
-        const r = (await Api.rpc('consultar_stock', { p_codigo: cod }))[0];
-        if (!r) return toast('No existe un repuesto con ese código', 'error');
+        const r = repElegido || (await Api.rpc('consultar_stock', { p_codigo: cod }))[0];
+        if (!r) return toast('No existe un repuesto con ese código: elegilo de la lista', 'error');
         const yaPedido = s.repuestos.filter(x => x.codigo === r.codigo).reduce((a, x) => a + x.cantidad, 0);
         if (cant + yaPedido > Number(r.disponible)) return toast(`No alcanza el stock de ${r.codigo}: hay ${num(r.disponible)}`, 'error');
         s.repuestos.push({ codigo: r.codigo, descripcion: r.descripcion, cantidad: cant, disponible: Number(r.disponible) });
-        $('n-rep-cod').value = ''; $('n-rep-cant').value = ''; pintarReps(); $('n-rep-cod').focus();
+        repElegido = null; $('n-rep-cod').value = ''; $('n-rep-cant').value = ''; pintarReps(); $('n-rep-cod').focus();
       } catch (e) { toast(errMsg(e), 'error'); }
     });
     on(main, 'click', '[data-quitar-t]', (ev, b) => { s.tareas.splice(Number(b.dataset.quitarT), 1); pintarTareas(); });
@@ -224,7 +238,8 @@
       try {
         const id = await Api.rpc('crear_ot', {
           p_unidad_id: s.unidad.id, p_km: km, p_tipo: $('n-tipo').value,
-          p_tareas: s.tareas.map(t => t.tempario_id ? { tempario_id: t.tempario_id } : { descripcion: t.descripcion, horas: t.horas }),
+          p_tareas: s.tareas.map(t => t.tempario_id ? { tempario_id: t.tempario_id, cantidad: t.cantidad }
+                                                    : { descripcion: t.descripcion, horas: t.horas, cantidad: t.cantidad }),
           p_repuestos: s.repuestos.map(r => ({ codigo: r.codigo, cantidad: r.cantidad })),
           p_observaciones: $('n-obs').value.trim() || null, p_presupuesto: $('n-presupuesto').value.trim() || null,
           p_ot_cliente: $('n-otcliente').value.trim() || null, p_hora_ingreso: $('n-hora').value || null
@@ -238,13 +253,13 @@
     });
   }, ['OFICINA', 'ADMINISTRADOR']);
 
-  // ---------------- Solicitudes: aprobar y rechazar ----------------
+  // ---------------- Solicitudes de tareas: aprobar y rechazar ----------------
   async function aprobar(sol, listaMecanicos) {
     const opciones = [['', 'Sin asignar por ahora']].concat(listaMecanicos.map(m => [m.id, m.nombre]));
     const campos = [{ id: 'mec', label: 'Asignar a', tipo: 'select', opciones, valor: sol.mecanico ? sol.mecanico.id : '' }];
-    if (!sol.tempario_id) campos.push({ id: 'horas', label: 'Horas a cobrar (la tarea no está en el tempario)', inputmode: 'decimal', obligatorio: true });
+    if (!sol.tempario_id) campos.push({ id: 'horas', label: 'Horas por unidad (la tarea no está en el tempario)', inputmode: 'decimal', obligatorio: true });
     const v = await modal({ titulo: 'Aprobar solicitud', textoOk: 'Aprobar',
-      html: `<p><b>${esc(sol.tarea_propuesta)}</b></p><p class="nota">Falla: ${esc(sol.falla)}</p>`, campos });
+      html: `<p><b>${esc(sol.tarea_propuesta)}</b>${Number(sol.cantidad) !== 1 ? ' × ' + num(sol.cantidad) : ''}</p><p class="nota">Falla: ${esc(sol.falla)}</p>`, campos });
     if (!v) return false;
     let horas = null;
     if (!sol.tempario_id) {
@@ -266,41 +281,170 @@
     try { await Api.rpc('rechazar_solicitud', { p_solicitud_id: sol.id, p_motivo: v.motivo.trim() }); toast('Solicitud rechazada'); return true; }
     catch (e) { toast(errMsg(e), 'error'); return false; }
   }
-  const selSolicitud = 'id,falla,tarea_propuesta,tempario_id,estado,motivo_rechazo,creado_en,resuelta_en,' +
+  const selSolicitud = 'id,falla,tarea_propuesta,cantidad,tempario_id,estado,motivo_rechazo,creado_en,resuelta_en,' +
                        'ot:ordenes_trabajo(id,numero,unidad:unidades(dominio)),mecanico:usuarios!solicitudes_mecanico_id_fkey(id,nombre)';
+  const selSolicitudOT = 'id,unidad_texto,km,tipo,tareas,repuestos,observaciones,estado,motivo_rechazo,creado_en,resuelta_en,' +
+                         'unidad:unidades(id,dominio,interno,cliente:clientes(nombre)),ot:ordenes_trabajo(id,numero),' +
+                         'mecanico:usuarios!solicitudes_de_ot_mecanico_id_fkey(id,nombre)';
 
   ruta(/^#\/solicitudes$/, async main => {
-    const [pend, resueltas, mecs] = await Promise.all([
+    const [pend, resueltas, mecs, pedidosOT] = await Promise.all([
       Api.select('solicitudes', { select: selSolicitud, estado: 'eq.PENDIENTE', order: 'creado_en' }),
       Api.select('solicitudes', { select: selSolicitud, estado: 'neq.PENDIENTE', order: 'resuelta_en.desc', limit: 30 }),
-      mecanicos()
+      mecanicos(),
+      esAdmin() ? Api.select('solicitudes_de_ot', { select: selSolicitudOT, order: 'creado_en.desc', limit: 30 }) : Promise.resolve([])
     ]);
+    const otPend = pedidosOT.filter(s => s.estado === 'PENDIENTE');
+    const otResueltas = pedidosOT.filter(s => s.estado !== 'PENDIENTE').slice(0, 10);
     main.innerHTML = `
-      <div class="encabezado"><div><h1>Solicitudes de tareas</h1><div class="sub">${pend.length} pendientes</div></div></div>
+      <div class="encabezado"><div><h1>Solicitudes</h1>
+        <div class="sub">${esAdmin() ? `${otPend.length} pedidos de OT y ` : ''}${pend.length} tareas pendientes</div></div></div>
+      ${esAdmin() ? `<h2 style="margin:0 0 10px">Pedidos de OT nueva</h2>
+        <div class="lista-tareas" style="margin-bottom:20px">${otPend.length ? otPend.map(s => `
+          <a class="tarea-card" href="#/solicitud-ot/${s.id}">
+            <div class="linea1"><span>${esc(s.mecanico ? s.mecanico.nombre : '')} · ${fechaHora(s.creado_en)}</span><span class="chip ambar">Para revisar</span></div>
+            <div class="titulo">${esc(s.unidad ? s.unidad.dominio + ' · ' + (s.unidad.cliente ? s.unidad.cliente.nombre : '') : s.unidad_texto)}</div>
+            <div class="linea3">${esc(s.tipo)} · KM ${num(s.km, 0)} · ${s.tareas.length} trabajos · ${s.repuestos.length} repuestos</div>
+          </a>`).join('') : '<div class="tarjeta vacio">No hay pedidos de OT para revisar.</div>'}</div>` : ''}
+      <h2 style="margin:0 0 10px">Tareas pedidas en OT abiertas</h2>
       <div class="lista-tareas">${pend.length ? pend.map((s, i) => `
         <div class="tarea-card">
           <div class="linea1"><span><a href="#/ot/${s.ot.id}">${esc(nroOT(s.ot.numero))}</a> · ${esc(s.ot.unidad ? s.ot.unidad.dominio : '')} · ${esc(s.mecanico ? s.mecanico.nombre : '')} · ${fechaHora(s.creado_en)}</span></div>
-          <div class="titulo">${esc(s.tarea_propuesta)}</div>
+          <div class="titulo">${esc(s.tarea_propuesta)}${Number(s.cantidad) !== 1 ? ' × ' + num(s.cantidad) : ''}</div>
           <div class="linea3">Falla: ${esc(s.falla)}</div>
           <div class="acciones" style="margin-top:6px"><button class="btn btn-verde" data-aprobar="${i}">Aprobar</button>
             <button class="btn btn-peligro" data-rechazar="${i}">Rechazar</button></div>
-        </div>`).join('') : '<div class="tarjeta vacio">No hay solicitudes pendientes.</div>'}</div>
+        </div>`).join('') : '<div class="tarjeta vacio">No hay tareas pendientes.</div>'}</div>
       <h2 style="margin:24px 0 10px">Resueltas recientemente</h2>
-      <div class="tabla-caja"><table><thead><tr><th>OT</th><th>Mecánico</th><th>Tarea propuesta</th><th>Resultado</th></tr></thead><tbody>
-        ${resueltas.length ? resueltas.map(s => `<tr><td>${esc(nroOT(s.ot.numero))}</td><td>${esc(s.mecanico ? s.mecanico.nombre : '')}</td>
+      <div class="tabla-caja"><table><thead><tr><th>Qué</th><th>Mecánico</th><th>Detalle</th><th>Resultado</th></tr></thead><tbody>
+        ${otResueltas.map(s => `<tr><td>Pedido de OT</td><td>${esc(s.mecanico ? s.mecanico.nombre : '')}</td>
+          <td>${esc(s.unidad ? s.unidad.dominio : s.unidad_texto)}</td><td>${s.estado === 'APROBADA'
+            ? `<span class="chip verde">Aceptada</span> ${s.ot ? `<a href="#/ot/${s.ot.id}">${esc(nroOT(s.ot.numero))}</a>` : ''}`
+            : `<span class="chip rojo">Rechazada</span> <span class="nota">${esc(s.motivo_rechazo)}</span>`}</td></tr>`).join('')}
+        ${resueltas.map(s => `<tr><td>Tarea en ${esc(nroOT(s.ot.numero))}</td><td>${esc(s.mecanico ? s.mecanico.nombre : '')}</td>
           <td>${esc(s.tarea_propuesta)}</td><td>${s.estado === 'APROBADA' ? '<span class="chip verde">Aprobada</span>' :
-          `<span class="chip rojo">Rechazada</span> <span class="nota">${esc(s.motivo_rechazo)}</span>`}</td></tr>`).join('')
-          : '<tr><td colspan="4" class="vacio">Sin solicitudes resueltas.</td></tr>'}</tbody></table></div>`;
+          `<span class="chip rojo">Rechazada</span> <span class="nota">${esc(s.motivo_rechazo)}</span>`}</td></tr>`).join('')}
+        ${!resueltas.length && !otResueltas.length ? '<tr><td colspan="4" class="vacio">Sin solicitudes resueltas.</td></tr>' : ''}</tbody></table></div>`;
     on(main, 'click', '[data-aprobar]', async (ev, b) => { if (await aprobar(pend[Number(b.dataset.aprobar)], mecs)) navegar(); });
     on(main, 'click', '[data-rechazar]', async (ev, b) => { if (await rechazar(pend[Number(b.dataset.rechazar)])) navegar(); });
   }, ['OFICINA', 'ADMINISTRADOR']);
 
+  // ---------------- Revisar un pedido de OT del mecánico (Administrador) ----------------
+  ruta(/^#\/solicitud-ot\/(\d+)$/, async (main, id) => {
+    const filas = await Api.select('solicitudes_de_ot', { select: selSolicitudOT, id: 'eq.' + id });
+    const s = filas[0];
+    if (!s) { main.innerHTML = '<div class="tarjeta">No se encontró el pedido.</div>'; return; }
+    const pendiente = s.estado === 'PENDIENTE';
+    const [unidades, stock] = await Promise.all([
+      pendiente && !s.unidad ? Api.select('unidades', { select: 'id,dominio,interno,tipo,cliente:clientes(nombre)', order: 'dominio' }) : Promise.resolve([]),
+      s.repuestos.length ? Api.select('stock_disponible', { select: 'codigo,disponible',
+        codigo: 'in.(' + s.repuestos.map(r => '"' + String(r.codigo).replace(/"/g, '') + '"').join(',') + ')' }) : Promise.resolve([])
+    ]);
+    const disp = new Map(stock.map(x => [x.codigo, Number(x.disponible)]));
+    const temp = pendiente ? await tempario(s.tipo) : [];
+    const horasTemp = new Map(temp.map(x => [x.id, Number(x.horas)]));
+    const dis = pendiente ? '' : 'disabled';
+
+    main.innerHTML = `
+      <a class="volver" href="#/solicitudes">${ICONOS.atras} Solicitudes</a>
+      <div class="encabezado"><div><h1>Pedido de OT</h1>
+        <div class="sub">De ${esc(s.mecanico ? s.mecanico.nombre : '')} · ${fechaHora(s.creado_en)} · las tareas quedan sin asignar al aceptarla</div></div>
+        <div class="acciones">${pendiente ? '<span class="chip ambar">Para revisar</span>' : s.estado === 'APROBADA'
+          ? `<span class="chip verde">Aceptada</span> ${s.ot ? `<a class="btn" href="#/ot/${s.ot.id}">Ver ${esc(nroOT(s.ot.numero))}</a>` : ''}`
+          : `<span class="chip rojo">Rechazada</span>`}</div></div>
+      ${s.estado === 'RECHAZADA' ? `<div class="error-box">Motivo: ${esc(s.motivo_rechazo)}</div>` : ''}
+      <section class="tarjeta"><h2>Vehículo</h2>
+        ${s.unidad ? `<div class="datos" style="margin-bottom:12px">
+            <div class="dato"><div class="et">Cliente</div><div class="va">${esc(s.unidad.cliente ? s.unidad.cliente.nombre : '')}</div></div>
+            <div class="dato"><div class="et">Dominio</div><div class="va">${esc(s.unidad.dominio)}</div></div>
+            <div class="dato"><div class="et">INT</div><div class="va">${esc(s.unidad.interno || '—')}</div></div></div>`
+          : `<div class="aviso-box">El mecánico escribió: <b>${esc(s.unidad_texto)}</b>. Elegí la unidad${pendiente ? '; si no está, cargala primero en <a href="#/clientes">Clientes y unidades</a>' : ''}.</div>
+            ${pendiente ? `<div class="campo"><label for="r-unidad" class="obligatorio">Unidad</label><select id="r-unidad">
+              <option value="">Elegí…</option>${unidades.map(u => `<option value="${u.id}">${esc(u.dominio)} · ${esc(u.cliente ? u.cliente.nombre : '')}${u.interno ? ' · INT ' + esc(u.interno) : ''}</option>`).join('')}</select></div>` : ''}`}
+        <div class="fila-campos">
+          <div class="campo"><label for="r-tipo">Tipo de unidad</label><select id="r-tipo" ${dis}>${TIPOS.map(t => `<option ${t === s.tipo ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
+          <div class="campo"><label for="r-km">KM</label><input id="r-km" inputmode="numeric" value="${esc(s.km)}" ${dis}></div>
+        </div>
+        <div class="campo"><label for="r-obs">Observaciones</label><textarea id="r-obs" ${dis}>${esc(s.observaciones || '')}</textarea></div>
+      </section>
+      <section class="tarjeta"><h2>Trabajos</h2>
+        <div class="tabla-caja"><table><thead><tr><th>Incluir</th><th>Tarea</th><th class="num">Cant.</th><th class="num">Hs c/u</th></tr></thead><tbody>
+          ${s.tareas.map((t, i) => `<tr><td><label class="check"><input type="checkbox" data-inc-t="${i}" checked ${dis} aria-label="Incluir ${esc(t.descripcion)}"></label></td>
+            <td>${esc(t.descripcion)}<div class="nota">${t.tempario_id ? esc(t.categoria || 'Tempario') : 'A mano: poné las horas'}</div></td>
+            <td class="num"><input class="cant-input" data-cant-t="${i}" value="${String(t.cantidad || 1).replace('.', ',')}" inputmode="decimal" ${dis} aria-label="Cantidad"></td>
+            <td class="num"><input class="cant-input" data-horas-t="${i}" value="${t.tempario_id ? String(horasTemp.get(t.tempario_id) ?? t.horas ?? '').replace('.', ',') : (t.horas != null ? String(t.horas).replace('.', ',') : '')}"
+              inputmode="decimal" ${dis} aria-label="Horas por unidad" placeholder="0"></td></tr>`).join('') || '<tr><td colspan="4" class="vacio">Sin trabajos.</td></tr>'}
+        </tbody></table></div>
+      </section>
+      <section class="tarjeta"><h2>Repuestos</h2>
+        <div class="tabla-caja"><table><thead><tr><th>Incluir</th><th>Código</th><th>Repuesto</th><th class="num">Cant.</th><th class="num">Stock hoy</th></tr></thead><tbody>
+          ${s.repuestos.map((r, i) => `<tr><td><label class="check"><input type="checkbox" data-inc-r="${i}" checked ${dis} aria-label="Incluir ${esc(r.descripcion)}"></label></td>
+            <td>${esc(r.codigo)}</td><td>${esc(r.descripcion)}</td>
+            <td class="num"><input class="cant-input" data-cant-r="${i}" value="${String(r.cantidad).replace('.', ',')}" inputmode="decimal" ${dis} aria-label="Cantidad"></td>
+            <td class="num" style="color:${(disp.get(r.codigo) || 0) >= Number(r.cantidad) ? 'var(--verde)' : 'var(--rojo)'};font-weight:600">${num(disp.get(r.codigo) || 0)}</td></tr>`).join('')
+            || '<tr><td colspan="5" class="vacio">Sin repuestos.</td></tr>'}
+        </tbody></table></div>
+        ${pendiente && s.repuestos.length ? '<div class="nota" style="margin-top:6px">Al aceptar se descuenta el stock. Si no alcanza, destildá ese repuesto.</div>' : ''}
+      </section>
+      <div class="error-box oculto" id="r-error"></div>
+      ${pendiente ? `<div class="acciones" style="justify-content:flex-end;margin-bottom:24px">
+        <button class="btn btn-peligro" data-accion="rechazar">Rechazar</button>
+        <button class="btn btn-verde" data-accion="aceptar">Aceptar y crear OT</button></div>` : ''}`;
+
+    if (!pendiente) return;
+    const err = document.getElementById('r-error');
+    const mostrar = m => { err.textContent = m; err.classList.remove('oculto'); };
+    on(main, 'click', '[data-accion=rechazar]', async () => {
+      const v = await modal({ titulo: 'Rechazar pedido de OT', textoOk: 'Rechazar', peligro: true,
+        campos: [{ id: 'motivo', label: 'Motivo (le llega al mecánico)', tipo: 'textarea', obligatorio: true }] });
+      if (!v) return;
+      try { await Api.rpc('rechazar_solicitud_ot', { p_id: s.id, p_motivo: v.motivo.trim() }); toast('Pedido rechazado'); ir('#/solicitudes'); }
+      catch (e) { toast(errMsg(e), 'error'); }
+    });
+    on(main, 'click', '[data-accion=aceptar]', async (ev, b) => {
+      err.classList.add('oculto');
+      const unidadSel = document.getElementById('r-unidad');
+      if (unidadSel && !unidadSel.value) return mostrar('Elegí la unidad.');
+      const km = parseInt(String(document.getElementById('r-km').value).replace(/\D/g, ''), 10);
+      if (isNaN(km)) return mostrar('El KM no es válido.');
+      const tareas = [];
+      for (const [i, t] of s.tareas.entries()) {
+        if (!main.querySelector(`[data-inc-t="${i}"]`).checked) continue;
+        const cant = parseNum(main.querySelector(`[data-cant-t="${i}"]`).value);
+        const hTxt = main.querySelector(`[data-horas-t="${i}"]`).value;
+        const h = hTxt.trim() === '' ? 0 : parseNum(hTxt);
+        if (!(cant > 0)) return mostrar(`Revisá la cantidad de "${t.descripcion}".`);
+        if (!(h >= 0)) return mostrar(`Revisá las horas de "${t.descripcion}".`);
+        tareas.push(t.tempario_id ? { tempario_id: t.tempario_id, horas: h, cantidad: cant } : { descripcion: t.descripcion, horas: h, cantidad: cant });
+      }
+      const repuestos = [];
+      for (const [i, r] of s.repuestos.entries()) {
+        if (!main.querySelector(`[data-inc-r="${i}"]`).checked) continue;
+        const cant = parseNum(main.querySelector(`[data-cant-r="${i}"]`).value);
+        if (!(cant > 0)) return mostrar(`Revisá la cantidad de ${r.codigo}.`);
+        repuestos.push({ codigo: r.codigo, cantidad: cant });
+      }
+      if (!tareas.length && !repuestos.length) return mostrar('La OT necesita al menos un trabajo o un repuesto.');
+      b.disabled = true;
+      try {
+        const otId = await Api.rpc('aprobar_solicitud_ot', {
+          p_id: s.id, p_unidad_id: unidadSel ? Number(unidadSel.value) : null, p_km: km,
+          p_tipo: document.getElementById('r-tipo').value, p_tareas: tareas, p_repuestos: repuestos,
+          p_observaciones: document.getElementById('r-obs').value.trim() || null });
+        toast('OT creada. Asigná las tareas a los mecánicos.');
+        ir('#/ot/' + otId);
+      } catch (e) { mostrar(errMsg(e)); b.disabled = false; }
+    });
+  }, ['ADMINISTRADOR']);
+
   // ---------------- Detalle de OT ----------------
   async function cargarOT(id) {
     const [ots, tareas, reps] = await Promise.all([
-      Api.select('ordenes_trabajo', { select: '*,unidad:unidades(id,dominio,interno,chasis,tipo,marca:marcas(nombre),modelo:modelos(nombre)),cliente:clientes(nombre,cuit,telefono)',
+      Api.select('ordenes_trabajo', { select: '*,unidad:unidades(id,dominio,interno,chasis,tipo,marca:marcas(nombre),modelo:modelos(nombre)),cliente:clientes(nombre,cuit,telefono),' +
+                                              'solicitante:usuarios!ordenes_trabajo_solicitada_por_fkey(nombre),' +
+                                              'pausas:pausas_ot(id,motivo,detalle,inicio,fin,pausador:usuarios!pausas_ot_pausada_por_fkey(nombre),reanudador:usuarios!pausas_ot_reanudada_por_fkey(nombre))',
                                       id: 'eq.' + id }),
-      Api.select('tareas_ot', { select: 'id,renglon,descripcion,horas,estado,tempario(categoria:categorias_tempario(nombre)),asignaciones(mecanico_id,terminada_en,usuario:usuarios(nombre))',
+      Api.select('tareas_ot', { select: 'id,renglon,descripcion,horas,cantidad,horas_total,estado,tempario(categoria:categorias_tempario(nombre)),asignaciones(mecanico_id,terminada_en,usuario:usuarios(nombre))',
                                 ot_id: 'eq.' + id, order: 'renglon' }),
       Api.select('repuestos_ot', { select: 'id,codigo,cantidad,tarea_id,cargado_en,repuesto:repuestos(descripcion),cargador:usuarios!repuestos_ot_cargado_por_fkey(nombre)',
                                    ot_id: 'eq.' + id, order: 'id' })
@@ -312,13 +456,16 @@
     const { ot, tareas, reps } = await cargarOT(id);
     if (!ot) { main.innerHTML = '<div class="tarjeta">No se encontró la OT.</div>'; return; }
     const puede = esOficina();
-    const [mecs, sols, reales] = await Promise.all([
+    const [mecs, sols, reales, pedidos] = await Promise.all([
       puede ? mecanicos() : Promise.resolve([]),
       puede ? Api.select('solicitudes', { select: selSolicitud, ot_id: 'eq.' + id, estado: 'eq.PENDIENTE', order: 'creado_en' }) : Promise.resolve([]),
-      esAdmin() ? Api.select('horas_reales', { select: 'tarea_id,mecanico,horas_reales,en_curso', ot_id: 'eq.' + id }) : Promise.resolve([])
+      esAdmin() ? Api.select('horas_reales', { select: 'tarea_id,mecanico,horas_reales,en_curso', ot_id: 'eq.' + id }) : Promise.resolve([]),
+      Api.select('pedidos_repuesto', { select: 'id,descripcion,codigo,cantidad,estado,nota,creado_en,pedidor:usuarios!pedidos_repuesto_pedido_por_fkey(nombre)', ot_id: 'eq.' + id, order: 'creado_en.desc' })
     ]);
     const u = ot.unidad || {};
-    const totalHoras = tareas.reduce((a, t) => a + Number(t.horas || 0), 0);
+    const pausa = pausaAbierta(ot);
+    const pausasViejas = (ot.pausas || []).filter(p => p.fin).sort((a, b) => new Date(b.inicio) - new Date(a.inicio));
+    const totalHoras = tareas.reduce((a, t) => a + Number(t.horas_total || 0), 0);
     const renglonDe = new Map(tareas.map(t => [t.id, t.renglon]));
     const realesPorTarea = {};
     for (const r of reales) (realesPorTarea[r.tarea_id] = realesPorTarea[r.tarea_id] || []).push(r);
@@ -336,35 +483,40 @@
           ${esAdmin() ? '<button class="btn btn-peligro" data-accion="borrar-ot">Eliminar</button>' : ''}
         </div>
       </div>
+      ${pausa ? `<div class="pausa-banner">
+        <div><div class="titulo">OT pausada · ${esc(textoMotivo(pausa.motivo))}</div>
+          <div class="det">Por ${esc(pausa.pausador ? pausa.pausador.nombre : '')} el ${hora(pausa.inicio)}${pausa.detalle ? ' · ' + esc(pausa.detalle) : ''}</div></div>
+        ${puede ? '<button class="btn btn-primario" data-accion="reanudar">Reanudar OT</button>' : ''}</div>` : ''}
       ${sols.length ? `<section class="tarjeta" style="border-color:var(--ambar-borde);background:var(--ambar)"><h2>Solicitudes pendientes</h2>
-        ${sols.map((s, i) => `<div class="repuesto-fila"><div class="info"><div class="desc">${esc(s.tarea_propuesta)}</div>
+        ${sols.map((s, i) => `<div class="repuesto-fila"><div class="info"><div class="desc">${esc(s.tarea_propuesta)}${Number(s.cantidad) !== 1 ? ' × ' + num(s.cantidad) : ''}</div>
           <div class="cod">${esc(s.mecanico ? s.mecanico.nombre : '')} · Falla: ${esc(s.falla)}</div></div>
           <button class="btn btn-verde btn-chico" data-aprobar="${i}">Aprobar</button>
           <button class="btn btn-peligro btn-chico" data-rechazar="${i}">Rechazar</button></div>`).join('')}</section>` : ''}
       <div class="dos-col">
         <div class="principal">
           <section class="tarjeta"><h2>Trabajos y servicios</h2>
-            <div class="tabla-caja"><table><thead><tr><th>#</th><th style="min-width:200px">Tarea</th><th class="num">Hs tempario</th><th>Mecánicos</th><th>Estado</th>
+            <div class="tabla-caja"><table><thead><tr><th>#</th><th style="min-width:180px">Tarea</th><th class="num">Cant.</th><th class="num">Hs c/u</th><th class="num">Hs total</th><th>Mecánicos</th><th>Estado</th>
               ${esAdmin() ? '<th>Horas reales</th>' : ''}${puede ? '<th></th>' : ''}</tr></thead><tbody>
             ${tareas.length ? tareas.map(t => {
               const asig = t.asignaciones || [];
               const libres = mecs.filter(m => !asig.some(a => a.mecanico_id === m.id));
               return `<tr><td>${t.renglon}</td>
                 <td>${esc(t.descripcion)}${t.tempario && t.tempario.categoria ? `<div class="nota">${esc(t.tempario.categoria.nombre)}</div>` : '<div class="nota">A mano</div>'}</td>
-                <td class="num">${puede ? `<button class="btn-texto" data-editar-tarea="${t.id}" title="Editar tarea y horas">${num(t.horas)}</button>` : num(t.horas)}</td>
+                <td class="num">${num(t.cantidad)}</td><td class="num">${num(t.horas)}</td><td class="num"><b>${num(t.horas_total)}</b></td>
                 <td>${asig.map(a => `<span class="chip" style="margin:2px">${esc(a.usuario ? a.usuario.nombre : '')}${a.terminada_en ? ' ✓' : ''}${puede ? `<button class="chip-x" data-desasignar="${t.id}" data-mec="${a.mecanico_id}" aria-label="Quitar a ${esc(a.usuario ? a.usuario.nombre : '')}">×</button>` : ''}</span>`).join('')}
                   ${puede && asig.length < 2 && libres.length ? `<select data-asignar="${t.id}" aria-label="Asignar mecánico" style="width:auto;min-height:36px;margin-top:4px">
                     <option value="">${asig.length ? '+ segundo mecánico' : 'Asignar…'}</option>${libres.map(m => `<option value="${m.id}">${esc(m.nombre)}</option>`).join('')}</select>` : ''}
                   ${!asig.length && !puede ? '<span class="nota">Sin asignar</span>' : ''}</td>
                 <td>${chipEstadoTarea(t.estado)}</td>
                 ${esAdmin() ? `<td>${(realesPorTarea[t.id] || []).map(r => `<div class="nota">${esc(r.mecanico)}: ${num(r.horas_reales)} h${r.en_curso ? ' (en curso)' : ''}</div>`).join('') || '<span class="nota">—</span>'}</td>` : ''}
-                ${puede ? `<td><button class="btn-texto" data-quitar-tarea="${t.id}">Quitar</button></td>` : ''}</tr>`;
-            }).join('') : `<tr><td colspan="7" class="vacio">Sin trabajos.</td></tr>`}
+                ${puede ? `<td style="white-space:nowrap"><button class="btn-texto" data-editar-tarea="${t.id}">Editar</button><button class="btn-texto" data-quitar-tarea="${t.id}">Quitar</button></td>` : ''}</tr>`;
+            }).join('') : `<tr><td colspan="9" class="vacio">Sin trabajos.</td></tr>`}
             </tbody></table></div>
             <div style="margin-top:10px;font-weight:600">Total horas (tempario): ${num(totalHoras)} h</div>
-            ${puede ? `<form id="f-agregar-tarea" style="display:flex;gap:8px;margin-top:12px">
-              <input id="o-tarea" list="dl-o-tareas" placeholder="Agregar tarea: buscá en el tempario o escribila" autocomplete="off">
+            ${puede ? `<form id="f-agregar-tarea" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
+              <input id="o-tarea" list="dl-o-tareas" placeholder="Agregar tarea: buscá en el tempario o escribila" autocomplete="off" style="flex:3 1 260px">
               <datalist id="dl-o-tareas">${temp.map(x => `<option value="${esc(claveTarea(x))}">${num(x.horas)} h</option>`).join('')}</datalist>
+              <input id="o-tarea-cant" value="1" inputmode="decimal" aria-label="Cantidad" title="Cantidad" style="flex:0 0 80px;text-align:center">
               <button class="btn" type="submit">Agregar</button></form>` : ''}
           </section>
           <section class="tarjeta"><h2>Repuestos</h2>
@@ -375,10 +527,18 @@
                 : `<tr><td colspan="6" class="vacio">Sin repuestos cargados.</td></tr>`}
             </tbody></table></div>
             ${puede ? `<form id="f-agregar-rep" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
-              <input id="o-rep-cod" placeholder="Código" style="flex:2 1 160px" autocomplete="off">
-              <input id="o-rep-cant" placeholder="Cantidad" inputmode="decimal" style="flex:1 1 90px" autocomplete="off">
+              <input id="o-rep-cod" placeholder="Código o descripción" style="flex:2 1 220px">
+              <input id="o-rep-cant" placeholder="Cantidad" inputmode="decimal" style="flex:0 1 110px" autocomplete="off">
               <button class="btn" type="submit">Agregar repuesto</button></form>` : ''}
           </section>
+          ${pedidos.length || pausasViejas.length ? `<section class="tarjeta"><h2>Pausas y pedidos de repuesto</h2>
+            ${pedidos.length ? `<div class="tabla-caja" style="margin-bottom:12px"><table><thead><tr><th>Repuesto pedido</th><th class="num">Cant.</th><th>Pidió</th><th>Estado</th></tr></thead><tbody>
+              ${pedidos.map(p => `<tr><td>${esc(p.descripcion)}${p.codigo ? `<div class="nota">${esc(p.codigo)}</div>` : '<div class="nota">No está en la lista</div>'}</td>
+                <td class="num">${num(p.cantidad)}</td><td>${esc(p.pedidor ? p.pedidor.nombre : '')}<div class="nota">${fechaHora(p.creado_en)}</div></td>
+                <td>${p.estado === 'RESUELTO' ? `<span class="chip verde">Resuelto</span>${p.nota ? ` <span class="nota">${esc(p.nota)}</span>` : ''}` : '<span class="chip ambar">Pendiente</span>'}</td></tr>`).join('')}
+              </tbody></table></div>` : ''}
+            ${pausasViejas.map(p => `<div class="nota" style="margin-bottom:4px">• ${esc(textoMotivo(p.motivo))}${p.detalle ? ' (' + esc(p.detalle) + ')' : ''}: ${hora(p.inicio)} → ${hora(p.fin)} · pausó ${esc(p.pausador ? p.pausador.nombre : '')}, reanudó ${esc(p.reanudador ? p.reanudador.nombre : '')}</div>`).join('')}
+          </section>` : ''}
         </div>
         <div class="secundaria">
           <section class="tarjeta"><h2>Datos de la OT</h2>
@@ -389,6 +549,7 @@
               <div class="dato"><div class="et">Chasis</div><div class="va">${esc(u.chasis || '—')}</div></div>
               <div class="dato"><div class="et">Marca y modelo</div><div class="va">${esc([u.marca && u.marca.nombre, u.modelo && u.modelo.nombre].filter(Boolean).join(' ') || '—')}</div></div>
               <div class="dato"><div class="et">Ingreso</div><div class="va">${fecha(ot.fecha_ingreso)}${ot.hora_ingreso ? ' ' + esc(ot.hora_ingreso.slice(0, 5)) : ''}</div></div>
+              ${ot.solicitante ? `<div class="dato"><div class="et">Pedida por</div><div class="va">${esc(ot.solicitante.nombre)}</div></div>` : ''}
             </div>
             <form id="f-datos">
               <div class="fila-campos">
@@ -424,6 +585,12 @@
         toast('Estado: ' + nuevo); recargar();
       } catch (e) { toast(errMsg(e), 'error'); ev.target.value = ot.estado; }
     });
+    on(main, 'click', '[data-accion=reanudar]', async () => {
+      const ok = await confirmar('¿Reanudar la OT? Los mecánicos vuelven a poder iniciar sus tareas.', { titulo: 'Reanudar OT', textoOk: 'Reanudar' });
+      if (!ok) return;
+      try { await Api.rpc('reanudar_ot', { p_ot_id: Number(id) }); toast('OT reanudada'); recargar(); }
+      catch (e) { toast(errMsg(e), 'error'); }
+    });
     document.getElementById('f-datos').addEventListener('submit', async ev => {
       ev.preventDefault();
       const km = parseInt(String(document.getElementById('o-km').value).replace(/\D/g, ''), 10);
@@ -451,11 +618,13 @@
       const t = tareas.find(x => String(x.id) === b.dataset.editarTarea);
       const v = await modal({ titulo: 'Editar tarea', textoOk: 'Guardar', campos: [
         { id: 'desc', label: 'Tarea', valor: t.descripcion, obligatorio: true },
-        { id: 'horas', label: 'Horas a cobrar', valor: String(t.horas).replace('.', ','), inputmode: 'decimal', obligatorio: true }] });
+        { id: 'cant', label: 'Cantidad (ej. 2 si es por lado)', valor: String(t.cantidad).replace('.', ','), inputmode: 'decimal', obligatorio: true },
+        { id: 'horas', label: 'Horas por unidad', valor: String(t.horas).replace('.', ','), inputmode: 'decimal', obligatorio: true }] });
       if (!v) return;
-      const h = parseNum(v.horas);
+      const h = parseNum(v.horas), c = parseNum(v.cant);
       if (!(h >= 0)) return toast('Las horas no son válidas', 'error');
-      try { await Api.update('tareas_ot', { id: 'eq.' + t.id }, { descripcion: v.desc.trim(), horas: h }); toast('Tarea actualizada'); recargar(); }
+      if (!(c > 0)) return toast('La cantidad tiene que ser mayor a cero', 'error');
+      try { await Api.update('tareas_ot', { id: 'eq.' + t.id }, { descripcion: v.desc.trim(), horas: h, cantidad: c }); toast('Tarea actualizada'); recargar(); }
       catch (e) { toast(errMsg(e), 'error'); }
     });
     on(main, 'click', '[data-quitar-tarea]', async (ev, b) => {
@@ -476,22 +645,28 @@
     document.getElementById('f-agregar-tarea').addEventListener('submit', async ev => {
       ev.preventDefault();
       const texto = document.getElementById('o-tarea').value.trim();
+      const cant = parseNum(document.getElementById('o-tarea-cant').value);
       if (!texto) return;
-      const x = temp.find(y => claveTarea(y) === texto) || temp.filter(y => y.tarea.toUpperCase() === texto.toUpperCase()).find((y, i, arr) => arr.length === 1);
+      if (!(cant > 0)) return toast('La cantidad tiene que ser mayor a cero', 'error');
+      const x = buscarEnTempario(temp, texto);
       let fila;
-      if (x) fila = { ot_id: Number(id), tempario_id: x.id };
-      else { const m = await pedirTareaAMano(texto); if (!m) return; fila = { ot_id: Number(id), descripcion: m.descripcion, horas: m.horas }; }
+      if (x) fila = { ot_id: Number(id), tempario_id: x.id, cantidad: cant };
+      else { const m = await pedirTareaAMano(texto); if (!m) return; fila = { ot_id: Number(id), descripcion: m.descripcion, horas: m.horas, cantidad: cant }; }
       try { await Api.insert('tareas_ot', fila); toast('Tarea agregada'); recargar(); }
       catch (e) { toast(errMsg(e), 'error'); }
     });
+    let repElegido = null;
+    autocompletarRepuesto(document.getElementById('o-rep-cod'), {
+      alElegir: r => { repElegido = r; document.getElementById('o-rep-cant').focus(); },
+      alEscribir: () => { repElegido = null; } });
     document.getElementById('f-agregar-rep').addEventListener('submit', async ev => {
       ev.preventDefault();
       const cod = document.getElementById('o-rep-cod').value.trim(), cant = parseNum(document.getElementById('o-rep-cant').value);
       if (!cod) return;
       if (!(cant > 0)) return toast('Indicá una cantidad mayor a cero', 'error');
       try {
-        const r = (await Api.rpc('consultar_stock', { p_codigo: cod }))[0];
-        if (!r) return toast('No existe un repuesto con ese código', 'error');
+        const r = repElegido || (await Api.rpc('consultar_stock', { p_codigo: cod }))[0];
+        if (!r) return toast('No existe un repuesto con ese código: elegilo de la lista', 'error');
         await Api.insert('repuestos_ot', { ot_id: Number(id), codigo: r.codigo, cantidad: cant });
         toast('Repuesto agregado'); recargar();
       } catch (e) { toast(errMsg(e), 'error'); }
@@ -508,148 +683,65 @@
     });
   }, ['OFICINA', 'ADMINISTRADOR', 'DEPOSITO']);
 
-  // ---------------- Impresión / PDF ----------------
+  // ---------------- Impresión / PDF: siempre en una sola hoja A4 ----------------
+  function ajustarHoja() {
+    const hoja = document.getElementById('hoja'), cont = document.getElementById('hoja-contenido');
+    if (!hoja || !cont) return;
+    const es = getComputedStyle(hoja);
+    // Margen de seguridad: la hoja impresa mide medio milímetro menos que en pantalla.
+    const disponible = (hoja.clientHeight - parseFloat(es.paddingTop) - parseFloat(es.paddingBottom)) * 0.985;
+    const alto = z => { cont.style.zoom = String(z); return cont.getBoundingClientRect().height; };
+    if (alto(1) <= disponible) { cont.style.zoom = '1'; return; }
+    // Busca el mayor tamaño de letra que entra en la hoja.
+    let bajo = 0.35, alto1 = 1;
+    for (let i = 0; i < 12; i++) {
+      const medio = (bajo + alto1) / 2;
+      if (alto(medio) <= disponible) bajo = medio; else alto1 = medio;
+    }
+    cont.style.zoom = String(Math.floor(bajo * 1000) / 1000);
+  }
+
   ruta(/^#\/imprimir\/(\d+)$/, async (main, id) => {
     const { ot, tareas, reps } = await cargarOT(id);
     if (!ot) { main.innerHTML = '<div class="tarjeta">No se encontró la OT.</div>'; return; }
     const u = ot.unidad || {};
-    const total = tareas.reduce((a, t) => a + Number(t.horas || 0), 0);
+    const total = tareas.reduce((a, t) => a + Number(t.horas_total || 0), 0);
     const tituloAnterior = document.title;
     document.title = nroOT(ot.numero) + ' - ' + (u.dominio || '');
-    st.limpiar.push(() => { document.title = tituloAnterior; });
+    st.limpiar.push(() => { document.title = tituloAnterior; window.removeEventListener('beforeprint', ajustarHoja); });
     main.innerHTML = `
       <div class="acciones no-imprimir" style="margin-bottom:12px">
         <a class="btn" href="#/ot/${ot.id}">${ICONOS.atras} Volver a la OT</a>
         <button class="btn btn-primario" onclick="window.print()">Imprimir / Guardar PDF</button>
-        <span class="nota">Para PDF, elegí "Guardar como PDF" en la impresora.</span>
+        <span class="nota">Siempre sale en una sola hoja A4. Para PDF, elegí "Guardar como PDF" en la impresora.</span>
       </div>
-      <div class="hoja">
+      <div class="hoja-marco"><div class="hoja" id="hoja"><div class="hoja-contenido" id="hoja-contenido">
         <h1>ORDEN DE REPARACIÓN DE VEHÍCULO</h1>
         <div class="empresa">${esc(cfg.empresa)}</div>
         <table><tr><th>N° OT</th><td><b>${esc(nroOT(ot.numero))}</b></td><th>Presupuesto</th><td>${esc(ot.presupuesto || '')}</td><th>OT cliente</th><td>${esc(ot.ot_cliente || '')}</td></tr>
           <tr><th>Fecha ingreso</th><td>${fecha(ot.fecha_ingreso)}</td><th>Hora ingreso</th><td>${esc((ot.hora_ingreso || '').slice(0, 5))}</td><th>N° FAC</th><td>${esc(ot.nro_factura || '')}</td></tr>
           <tr><th>Fecha salida</th><td>${fecha(ot.fecha_salida)}</td><th>Hora salida</th><td>${esc((ot.hora_salida || '').slice(0, 5))}</td><th>Estado</th><td>${esc(ot.estado)}</td></tr></table>
         <div class="seccion">DATOS DEL VEHÍCULO</div>
-        <table><tr><th>Cliente</th><th>Marca</th><th>Modelo</th><th>Dominio</th><th>INT</th><th>Chasis</th><th>KM</th></tr>
+        <table><tr><th>Cliente</th><th>Marca</th><th>Modelo</th><th>Dominio</th><th>INT</th><th>Chasis</th><th>KM</th><th>Tipo</th></tr>
           <tr><td>${esc(ot.cliente ? ot.cliente.nombre : '')}</td><td>${esc(u.marca ? u.marca.nombre : '')}</td><td>${esc(u.modelo ? u.modelo.nombre : '')}</td>
-          <td>${esc(u.dominio)}</td><td>${esc(u.interno || '')}</td><td>${esc(u.chasis || '')}</td><td>${num(ot.km, 0)}</td></tr></table>
-        <div><b>Tipo de unidad:</b> ${esc(ot.tipo)}</div>
+          <td>${esc(u.dominio)}</td><td>${esc(u.interno || '')}</td><td>${esc(u.chasis || '')}</td><td>${num(ot.km, 0)}</td><td>${esc(ot.tipo)}</td></tr></table>
         <div class="seccion">TRABAJO Y SERVICIO</div>
-        <table><tr><th style="width:8%">#</th><th>Descripción</th><th style="width:14%">HS</th></tr>
-          ${tareas.map(t => `<tr><td>${t.renglon}</td><td>${esc(t.descripcion)}</td><td style="text-align:right">${num(t.horas)}</td></tr>`).join('') || '<tr><td colspan="3">—</td></tr>'}
-          <tr><th colspan="2" style="text-align:right">TOTAL HS</th><th style="text-align:right">${num(total)}</th></tr></table>
+        <table><tr><th style="width:6%">#</th><th>Descripción</th><th style="width:10%">CANT.</th><th style="width:12%">HS</th></tr>
+          ${tareas.map(t => `<tr><td>${t.renglon}</td><td>${esc(t.descripcion)}</td><td style="text-align:right">${num(t.cantidad)}</td><td style="text-align:right">${num(t.horas_total)}</td></tr>`).join('') || '<tr><td colspan="4">—</td></tr>'}
+          <tr><th colspan="3" style="text-align:right">TOTAL HS</th><th style="text-align:right">${num(total)}</th></tr></table>
         <div class="seccion">REPUESTOS</div>
-        <table><tr><th style="width:24%">Código</th><th>Repuesto</th><th style="width:14%">Cantidad</th></tr>
+        <table><tr><th style="width:24%">Código</th><th>Repuesto</th><th style="width:12%">Cantidad</th></tr>
           ${reps.map(r => `<tr><td>${esc(r.codigo)}</td><td>${esc(r.repuesto ? r.repuesto.descripcion : '')}</td><td style="text-align:right">${num(r.cantidad)}</td></tr>`).join('') || '<tr><td colspan="3">—</td></tr>'}</table>
         ${ot.observaciones ? `<div class="seccion">OBSERVACIONES</div><div class="caja" style="min-height:0">${esc(ot.observaciones)}</div>` : ''}
         <div class="firmas">
-          <div><div class="seccion">CHECK INGRESO · INSPECCIÓN VISUAL</div><div class="nota" style="color:#000">G: Golpe / R: Rayado / F: Faltante</div><div class="caja"></div></div>
+          <div><div class="seccion">CHECK INGRESO · INSPECCIÓN VISUAL</div><div style="font-size:9pt">G: Golpe / R: Rayado / F: Faltante</div><div class="caja"></div></div>
           <div><div class="seccion">ENTREGA</div>
             <div>Firma:</div><div class="linea-firma"></div><div>Aclaración:</div><div class="linea-firma"></div>
             <div>DNI:</div><div class="linea-firma"></div><div>Fecha de retiro:</div><div class="linea-firma"></div></div>
         </div>
-      </div>`;
+      </div></div></div>`;
+    ajustarHoja();
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(ajustarHoja);
+    window.addEventListener('beforeprint', ajustarHoja);
   }, ['OFICINA', 'ADMINISTRADOR', 'DEPOSITO']);
-
-  // ---------------- Clientes y unidades ----------------
-  let clienteSel = null;
-  async function elegirMarcaModelo(actualMarca, actualModelo) {
-    const modelos = await Api.select('modelos', { select: 'id,nombre,marca:marcas(id,nombre)', order: 'nombre' });
-    const opciones = [['', '(sin cargar)']].concat(modelos.sort((a, b) => (a.marca.nombre + a.nombre).localeCompare(b.marca.nombre + b.nombre))
-      .map(m => [m.id, m.marca.nombre + ' · ' + m.nombre])).concat([['otro', 'Otra marca o modelo…']]);
-    return { modelos, opciones };
-  }
-  async function resolverMarcaModelo(valor, modelos) {
-    if (!valor) return { marca_id: null, modelo_id: null };
-    if (valor !== 'otro') { const m = modelos.find(x => String(x.id) === String(valor)); return { marca_id: m.marca.id, modelo_id: m.id }; }
-    const v = await modal({ titulo: 'Nueva marca o modelo', textoOk: 'Agregar',
-      campos: [{ id: 'marca', label: 'Marca', obligatorio: true }, { id: 'modelo', label: 'Modelo', obligatorio: true }] });
-    if (!v) return null;
-    const marcaTxt = v.marca.trim().toUpperCase(), modeloTxt = v.modelo.trim().toUpperCase();
-    let marca = (await Api.select('marcas', { select: 'id,nombre' })).find(x => x.nombre.toUpperCase() === marcaTxt);
-    if (!marca) marca = (await Api.insert('marcas', { nombre: marcaTxt }))[0];
-    let modelo = (await Api.select('modelos', { select: 'id,nombre', marca_id: 'eq.' + marca.id })).find(x => x.nombre.toUpperCase() === modeloTxt);
-    if (!modelo) modelo = (await Api.insert('modelos', { marca_id: marca.id, nombre: modeloTxt }))[0];
-    return { marca_id: marca.id, modelo_id: modelo.id };
-  }
-  async function formUnidad(u, clienteId) {
-    const { modelos, opciones } = await elegirMarcaModelo();
-    const v = await modal({ titulo: u ? 'Editar unidad ' + u.dominio : 'Nueva unidad', textoOk: 'Guardar', campos: [
-      { id: 'dominio', label: 'Dominio', valor: u ? u.dominio : '', obligatorio: true },
-      { id: 'interno', label: 'INT (interno)', valor: u ? u.interno : '' },
-      { id: 'chasis', label: 'Chasis', valor: u ? u.chasis : '' },
-      { id: 'mm', label: 'Marca y modelo', tipo: 'select', opciones, valor: u && u.modelo_id ? u.modelo_id : '' },
-      { id: 'tipo', label: 'Tipo de unidad', tipo: 'select', opciones: [['', '(sin cargar)']].concat(TIPOS), valor: u ? u.tipo || '' : '' }] });
-    if (!v) return false;
-    const mm = await resolverMarcaModelo(v.mm, modelos);
-    if (!mm) return false;
-    const fila = { dominio: v.dominio.trim().toUpperCase(), interno: v.interno.trim() || null, chasis: v.chasis.trim().toUpperCase() || null,
-                   marca_id: mm.marca_id, modelo_id: mm.modelo_id, tipo: v.tipo || null };
-    try {
-      if (u) await Api.update('unidades', { id: 'eq.' + u.id }, fila);
-      else await Api.insert('unidades', Object.assign({ cliente_id: clienteId }, fila));
-      toast(u ? 'Unidad guardada' : 'Unidad agregada'); return true;
-    } catch (e) { toast(errMsg(e), 'error'); return false; }
-  }
-  async function formCliente(c) {
-    const v = await modal({ titulo: c ? 'Editar cliente' : 'Nuevo cliente', textoOk: 'Guardar', campos: [
-      { id: 'nombre', label: 'Cliente', valor: c ? c.nombre : '', obligatorio: true },
-      { id: 'cuit', label: 'CUIT', valor: c ? c.cuit : '' }, { id: 'telefono', label: 'Teléfono', valor: c ? c.telefono : '' },
-      { id: 'email', label: 'Email', valor: c ? c.email : '' }, { id: 'direccion', label: 'Dirección', valor: c ? c.direccion : '' },
-      { id: 'contacto', label: 'Contacto', valor: c ? c.contacto : '' }] });
-    if (!v) return null;
-    const fila = { nombre: v.nombre.trim().toUpperCase() };
-    for (const k of ['cuit', 'telefono', 'email', 'direccion', 'contacto']) fila[k] = v[k].trim() || null;
-    try {
-      const r = c ? await Api.update('clientes', { id: 'eq.' + c.id }, fila) : await Api.insert('clientes', fila);
-      toast('Cliente guardado'); return r[0];
-    } catch (e) { toast(errMsg(e), 'error'); return null; }
-  }
-
-  ruta(/^#\/clientes$/, async main => {
-    const [clientes, todas] = await Promise.all([
-      Api.select('clientes', { select: 'id,nombre,cuit,telefono,email,direccion,contacto', order: 'nombre' }),
-      Api.select('unidades', { select: 'cliente_id' })
-    ]);
-    const cantidad = {};
-    for (const u of todas) cantidad[u.cliente_id] = (cantidad[u.cliente_id] || 0) + 1;
-    if (!clienteSel && clientes[0]) clienteSel = clientes[0].id;
-    const c = clientes.find(x => x.id === clienteSel);
-    const unidades = c ? await Api.select('unidades', { select: 'id,dominio,interno,chasis,tipo,marca_id,modelo_id,marca:marcas(nombre),modelo:modelos(nombre)',
-                                                       cliente_id: 'eq.' + c.id, order: 'dominio' }) : [];
-    main.innerHTML = `
-      <div class="encabezado"><div><h1>Clientes y unidades</h1></div>
-        <div class="acciones"><button class="btn btn-primario" data-accion="nuevo-cliente">Nuevo cliente</button></div></div>
-      <div class="dos-col">
-        <div class="secundaria"><div class="tabla-caja"><table><thead><tr><th>Cliente</th><th class="num">Unidades</th></tr></thead><tbody>
-          ${clientes.map(x => `<tr class="clic ${x.id === clienteSel ? 'bien' : ''}" data-cliente="${x.id}"><td><b>${esc(x.nombre)}</b></td>
-            <td class="num">${cantidad[x.id] || 0}</td></tr>`).join('') || '<tr><td colspan="2" class="vacio">Sin clientes.</td></tr>'}
-        </tbody></table></div></div>
-        <div class="principal">${c ? `
-          <section class="tarjeta">
-            <div class="encabezado" style="margin-bottom:8px"><h2>${esc(c.nombre)}</h2>
-              <div class="acciones"><button class="btn btn-chico" data-accion="editar-cliente">Editar</button></div></div>
-            <div class="datos">
-              <div class="dato"><div class="et">CUIT</div><div class="va">${esc(c.cuit || '—')}</div></div>
-              <div class="dato"><div class="et">Teléfono</div><div class="va">${esc(c.telefono || '—')}</div></div>
-              <div class="dato"><div class="et">Email</div><div class="va">${esc(c.email || '—')}</div></div>
-              <div class="dato"><div class="et">Contacto</div><div class="va">${esc(c.contacto || '—')}</div></div>
-              <div class="dato"><div class="et">Dirección</div><div class="va">${esc(c.direccion || '—')}</div></div>
-            </div>
-          </section>
-          <div class="encabezado" style="margin-bottom:10px"><h2>Unidades (${unidades.length})</h2>
-            <button class="btn" data-accion="nueva-unidad">Nueva unidad</button></div>
-          <div class="tabla-caja"><table><thead><tr><th>Dominio</th><th>INT</th><th>Chasis</th><th>Marca y modelo</th><th>Tipo</th><th></th></tr></thead><tbody>
-            ${unidades.map((u, i) => `<tr><td><b>${esc(u.dominio)}</b></td><td>${esc(u.interno || '')}</td><td>${esc(u.chasis || '')}</td>
-              <td>${esc([u.marca && u.marca.nombre, u.modelo && u.modelo.nombre].filter(Boolean).join(' ') || '—')}</td><td>${esc(u.tipo || '—')}</td>
-              <td><button class="btn-texto" data-editar-unidad="${i}">Editar</button></td></tr>`).join('') || '<tr><td colspan="6" class="vacio">Sin unidades cargadas.</td></tr>'}
-          </tbody></table></div>` : '<div class="tarjeta vacio">Elegí un cliente.</div>'}
-        </div>
-      </div>`;
-    on(main, 'click', '[data-cliente]', (ev, tr) => { clienteSel = Number(tr.dataset.cliente); navegar(); });
-    on(main, 'click', '[data-accion=nuevo-cliente]', async () => { const n = await formCliente(null); if (n) { clienteSel = n.id; navegar(); } });
-    on(main, 'click', '[data-accion=editar-cliente]', async () => { if (await formCliente(c)) navegar(); });
-    on(main, 'click', '[data-accion=nueva-unidad]', async () => { if (await formUnidad(null, c.id)) navegar(); });
-    on(main, 'click', '[data-editar-unidad]', async (ev, b) => { if (await formUnidad(unidades[Number(b.dataset.editarUnidad)])) navegar(); });
-  }, ['OFICINA', 'ADMINISTRADOR']);
 })();

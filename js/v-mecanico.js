@@ -1,16 +1,19 @@
 // MDE · Taller — pantallas del mecánico (celular).
 (() => {
   const { st, esc, num, parseNum, nroOT, fechaHora, duracion, chipEstadoTarea, errMsg, toast, modal, confirmar,
-          ICONOS, ruta, ir, on, navegar } = App;
+          ICONOS, MOTIVOS, textoMotivo, pausaAbierta, chipPausa, autocompletarRepuesto, TIPOS, ruta, ir, on, navegar } = App;
 
   let pestana = 'pendientes';
+  const hora = d => d ? new Date(d).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
+  const horasTexto = t => Number(t.cantidad) !== 1
+    ? `${num(t.cantidad)} × ${num(t.horas)} h = ${num(t.horas_total)} h` : `${num(t.horas)} h`;
 
   // ---------------- Mis tareas ----------------
   ruta(/^#\/tareas$/, async main => {
     const [asig, abiertos] = await Promise.all([
       Api.select('asignaciones', {
-        select: 'terminada_en,tarea:tareas_ot(id,descripcion,horas,estado,renglon,' +
-                'ot:ordenes_trabajo(id,numero,estado,tipo,unidad:unidades(dominio,interno),cliente:clientes(nombre)),' +
+        select: 'terminada_en,tarea:tareas_ot(id,descripcion,horas,cantidad,horas_total,estado,renglon,' +
+                'ot:ordenes_trabajo(id,numero,estado,tipo,unidad:unidades(dominio,interno),cliente:clientes(nombre),pausas:pausas_ot(motivo,fin)),' +
                 'companeros:asignaciones(mecanico_id,usuario:usuarios(nombre)))',
         mecanico_id: 'eq.' + st.usuarioId
       }),
@@ -20,12 +23,11 @@
     const items = asig.filter(a => a.tarea && a.tarea.ot).map(a => {
       const t = a.tarea;
       const hecha = !!a.terminada_en || t.estado === 'HECHA';
-      const otCerrada = ['CERRADA', 'PRUEBA'].includes(t.ot.estado);
       let grupo = 'pendientes';
       if (hecha) grupo = 'hechas';
       else if (corriendo.has(t.id)) grupo = 'curso';
-      else if (otCerrada) grupo = 'ocultas';
-      return { t, grupo, a };
+      else if (['CERRADA', 'PRUEBA'].includes(t.ot.estado)) grupo = 'ocultas';
+      return { t, grupo };
     });
     const cuenta = g => items.filter(i => i.grupo === g).length;
     const lista = items.filter(i => i.grupo === pestana)
@@ -42,11 +44,12 @@
       <div class="lista-tareas">
         ${lista.length ? lista.map(({ t, grupo }) => {
           const otros = (t.companeros || []).filter(c => c.mecanico_id !== st.usuarioId).map(c => c.usuario && c.usuario.nombre).filter(Boolean);
-          const estado = grupo === 'curso' ? '<span class="chip azul">En curso</span>' : chipEstadoTarea(grupo === 'hechas' ? 'HECHA' : t.estado);
+          const pausa = grupo !== 'hechas' ? pausaAbierta(t.ot) : null;
+          const estado = pausa ? chipPausa(pausa) : grupo === 'curso' ? '<span class="chip azul">En curso</span>' : chipEstadoTarea(grupo === 'hechas' ? 'HECHA' : t.estado);
           return `<a class="tarea-card ${grupo === 'curso' ? 'en-curso' : ''}" href="#/tarea/${t.id}">
             <div class="linea1"><span>${esc(nroOT(t.ot.numero))} · ${esc(t.ot.unidad ? t.ot.unidad.dominio : '')}</span>${estado}</div>
-            <div class="titulo">${esc(t.descripcion)}</div>
-            <div class="linea3">${esc(t.ot.cliente ? t.ot.cliente.nombre : '')} · ${esc(t.ot.tipo)} · Tempario ${num(t.horas)} h${otros.length ? ' · con ' + esc(otros.join(', ')) : ''}</div>
+            <div class="titulo">${esc(t.descripcion)}${Number(t.cantidad) !== 1 ? ` <span style="color:var(--gris)">× ${num(t.cantidad)}</span>` : ''}</div>
+            <div class="linea3">${esc(t.ot.cliente ? t.ot.cliente.nombre : '')} · ${esc(t.ot.tipo)} · Tempario ${horasTexto(t)}${otros.length ? ' · con ' + esc(otros.join(', ')) : ''}</div>
           </a>`;
         }).join('') : `<div class="tarjeta vacio">${pestana === 'pendientes' ? 'No tenés tareas pendientes.' : pestana === 'curso' ? 'No tenés tareas en curso.' : 'Todavía no terminaste tareas.'}</div>`}
       </div>`;
@@ -57,8 +60,9 @@
   ruta(/^#\/tarea\/(\d+)$/, async (main, id) => {
     const [tareas, registros, repuestos] = await Promise.all([
       Api.select('tareas_ot', {
-        select: 'id,descripcion,horas,estado,ot_id,tempario(categoria:categorias_tempario(nombre)),' +
-                'ot:ordenes_trabajo(id,numero,estado,tipo,km,observaciones,unidad:unidades(dominio,interno,chasis,marca:marcas(nombre),modelo:modelos(nombre)),cliente:clientes(nombre)),' +
+        select: 'id,descripcion,horas,cantidad,horas_total,estado,ot_id,tempario(categoria:categorias_tempario(nombre)),' +
+                'ot:ordenes_trabajo(id,numero,estado,tipo,km,observaciones,unidad:unidades(dominio,interno,chasis,marca:marcas(nombre),modelo:modelos(nombre)),cliente:clientes(nombre),' +
+                'pausas:pausas_ot(id,motivo,detalle,inicio,fin,pausador:usuarios!pausas_ot_pausada_por_fkey(nombre))),' +
                 'asignaciones(mecanico_id,terminada_en,usuario:usuarios(nombre))',
         id: 'eq.' + id
       }),
@@ -68,6 +72,8 @@
     const t = tareas[0];
     if (!t) { main.innerHTML = '<div class="tarjeta">No se encontró la tarea o no está asignada a vos.</div>'; return; }
     const ot = t.ot, u = ot.unidad || {};
+    const pausa = pausaAbierta(ot);
+    const pedidos = pausa ? await Api.select('pedidos_repuesto', { select: 'descripcion,codigo,cantidad,estado,nota', ot_id: 'eq.' + ot.id, pausa_id: 'eq.' + pausa.id, order: 'id' }) : [];
     const mia = (t.asignaciones || []).find(a => a.mecanico_id === st.usuarioId);
     const otros = (t.asignaciones || []).filter(a => a.mecanico_id !== st.usuarioId);
     const abierto = registros.find(r => !r.fin);
@@ -75,23 +81,25 @@
     const otCerrada = ['CERRADA', 'PRUEBA'].includes(ot.estado);
     const acumulado = () => registros.reduce((s, r) => s + ((r.fin ? new Date(r.fin) : new Date()) - new Date(r.inicio)), 0);
     const categoria = t.tempario && t.tempario.categoria ? t.tempario.categoria.nombre : '';
+    const editable = mia && !otCerrada;
 
     let botones = '';
     if (otCerrada) {
       botones = `<div class="aviso-box">La ${esc(nroOT(ot.numero))} está ${esc(ot.estado.toLowerCase())}: no se pueden hacer cambios.</div>`;
     } else if (!mia) {
       botones = '<div class="aviso-box">Esta tarea no está asignada a vos.</div>';
+    } else if (pausa) {
+      botones = '<div class="nota">La OT está pausada. Reanudala para seguir trabajando.</div>';
     } else if (terminadaYo) {
       botones = `<div class="ok-box">Terminaste tu parte de esta tarea.</div>
         <button class="btn" data-accion="iniciar">Reabrir y seguir trabajando</button>`;
     } else if (abierto) {
-      botones = `<div class="botones-2"><button class="btn btn-grande" data-accion="pausar">Pausar</button>
+      botones = `<div class="botones-2"><button class="btn btn-grande" data-accion="pausar">Pausar mi tarea</button>
         <button class="btn btn-verde btn-grande" data-accion="terminar">Terminar tarea</button></div>`;
     } else {
       botones = `<div class="botones-2"><button class="btn btn-primario btn-grande" data-accion="iniciar">${registros.length ? 'Reanudar' : 'Iniciar'}</button>
         <button class="btn btn-verde btn-grande" data-accion="terminar">Terminar tarea</button></div>`;
     }
-    const editable = mia && !otCerrada;
 
     main.innerHTML = `
       <div class="cabecera-tarea">
@@ -102,12 +110,17 @@
           <div class="dato"><div class="et">Dominio</div><div class="va">${esc(u.dominio)}</div></div>
           <div class="dato"><div class="et">INT</div><div class="va">${esc(u.interno || '—')}</div></div>
           <div class="dato"><div class="et">KM</div><div class="va">${num(ot.km, 0)}</div></div>
-          <div class="dato"><div class="et">Tempario</div><div class="va">${num(t.horas)} h</div></div>
+          <div class="dato"><div class="et">Tempario</div><div class="va">${horasTexto(t)}</div></div>
           <div class="dato"><div class="et">Unidad</div><div class="va">${esc([u.marca && u.marca.nombre, u.modelo && u.modelo.nombre].filter(Boolean).join(' ') || ot.tipo)}</div></div>
           ${otros.length ? `<div class="dato"><div class="et">Compañero</div><div class="va">${esc(otros.map(o => o.usuario && o.usuario.nombre).join(', '))}</div></div>` : ''}
         </div>
         ${ot.observaciones ? `<div class="sub" style="margin-top:10px">Obs.: ${esc(ot.observaciones)}</div>` : ''}
       </div>
+      ${pausa ? `<div class="pausa-banner">
+        <div><div class="titulo">OT pausada · ${esc(textoMotivo(pausa.motivo))}</div>
+          <div class="det">Por ${esc(pausa.pausador ? pausa.pausador.nombre : '')} el ${hora(pausa.inicio)}${pausa.detalle ? ' · ' + esc(pausa.detalle) : ''}</div>
+          ${pedidos.map(p => `<div class="det">• ${esc(p.descripcion)} × ${num(p.cantidad)} — ${p.estado === 'RESUELTO' ? '<b>ya está</b>' + (p.nota ? ' (' + esc(p.nota) + ')' : '') : 'pedido a Depósito'}</div>`).join('')}</div>
+        ${mia && !otCerrada ? '<button class="btn btn-primario" data-accion="reanudar-ot">Reanudar OT</button>' : ''}</div>` : ''}
       <section class="tarjeta">
         <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">
           <h3>Tiempo trabajado</h3><span class="nota">Solo control interno</span></div>
@@ -127,6 +140,7 @@
       </section>
       ${editable ? `<div style="display:flex;flex-direction:column;gap:8px">
         <a class="btn btn-primario btn-grande" href="#/escanear/${t.id}">${ICONOS.escanear} Escanear repuesto</a>
+        ${pausa ? '' : `<a class="btn btn-grande" href="#/pausar/${ot.id}/${t.id}">${ICONOS.pausa} Pausar la OT (con motivo)</a>`}
         <a class="btn btn-grande" href="#/solicitar/${ot.id}/${t.id}">Encontré otra falla: solicitar tarea</a></div>` : ''}`;
 
     if (abierto) {
@@ -139,10 +153,16 @@
       catch (e) { toast(errMsg(e), 'error'); }
     };
     on(main, 'click', '[data-accion=iniciar]', () => accion('iniciar_tarea', 'Cronómetro en marcha'));
-    on(main, 'click', '[data-accion=pausar]', () => accion('pausar_tarea', 'Tarea en pausa'));
+    on(main, 'click', '[data-accion=pausar]', () => accion('pausar_tarea', 'Tu tarea quedó en pausa'));
     on(main, 'click', '[data-accion=terminar]', async () => {
       const ok = await confirmar('¿Terminaste tu parte de esta tarea? Se detiene el cronómetro.', { titulo: 'Terminar tarea', textoOk: 'Sí, terminar' });
       if (ok) accion('terminar_tarea', otros.length ? 'Listo. La tarea queda hecha cuando termine tu compañero.' : 'Tarea terminada');
+    });
+    on(main, 'click', '[data-accion=reanudar-ot]', async () => {
+      const ok = await confirmar('¿Reanudar la OT? Después iniciá tu tarea para que corra el cronómetro.', { titulo: 'Reanudar OT', textoOk: 'Reanudar' });
+      if (!ok) return;
+      try { await Api.rpc('reanudar_ot', { p_ot_id: ot.id }); toast('OT reanudada'); navegar(); }
+      catch (e) { toast(errMsg(e), 'error'); }
     });
     on(main, 'click', '[data-editar]', async (ev, b) => {
       const v = await modal({ titulo: 'Modificar cantidad', textoOk: 'Guardar',
@@ -169,6 +189,98 @@
     });
   }, ['MECANICO']);
 
+  // ---------------- Pausar la OT ----------------
+  ruta(/^#\/pausar\/(\d+)(?:\/(\d+))?$/, async (main, otId, tareaId) => {
+    const ots = await Api.select('ordenes_trabajo', { select: 'id,numero,estado,unidad:unidades(dominio),pausas:pausas_ot(motivo,fin)', id: 'eq.' + otId });
+    const ot = ots[0];
+    if (!ot) { main.innerHTML = '<div class="tarjeta">No se encontró la OT.</div>'; return; }
+    const volver = tareaId ? '#/tarea/' + tareaId : '#/tareas';
+    if (pausaAbierta(ot)) { main.innerHTML = `<div class="tarjeta">La OT ya está pausada. <a href="${volver}">Volver</a></div>`; return; }
+
+    main.innerHTML = `
+      <a class="volver" href="${volver}">${ICONOS.atras} Volver</a>
+      <h1 style="margin:4px 0">Pausar la OT</h1>
+      <div class="nota" style="margin-bottom:14px">${esc(nroOT(ot.numero))} · ${esc(ot.unidad ? ot.unidad.dominio : '')} · se frenan todos los cronómetros de la OT</div>
+      <form id="f-pausa">
+        <section class="tarjeta"><h2>Motivo</h2>
+          <div class="opciones-motivo" role="radiogroup" aria-label="Motivo de la pausa">
+            ${MOTIVOS.map(([v, t], i) => `<label class="opcion"><input type="radio" name="motivo" value="${v}" ${i === 0 ? 'checked' : ''}> ${esc(t)}</label>`).join('')}
+          </div>
+          <div class="campo" style="margin-top:14px"><label for="p-detalle" id="p-detalle-et">Detalle (opcional)</label>
+            <textarea id="p-detalle" placeholder="Ej.: espera de presupuesto, se manda la tapa a rectificar…"></textarea></div>
+        </section>
+        <section class="tarjeta" id="p-repuestos"><h2>¿Qué repuesto falta?</h2>
+          <p class="nota" style="margin-top:0">Buscalo por código o descripción. Si no está en la lista, escribí qué es. El pedido le llega a Depósito y al Administrador.</p>
+          <div id="p-lineas"></div>
+          <button class="btn" type="button" data-accion="linea">+ Agregar otro repuesto</button>
+        </section>
+        <div class="error-box oculto" id="p-error"></div>
+        <button class="btn btn-primario btn-grande" type="submit">${ICONOS.pausa} Pausar OT</button>
+      </form>`;
+
+    const lineas = document.getElementById('p-lineas');
+    const agregarLinea = () => {
+      const div = document.createElement('div');
+      div.className = 'linea-pedido';
+      div.innerHTML = `<input class="l-texto" placeholder="Código o descripción" aria-label="Repuesto que falta">
+        <input class="l-cant cant" value="1" inputmode="decimal" aria-label="Cantidad">
+        <button class="btn btn-chico" type="button" data-quitar-linea aria-label="Quitar">×</button>`;
+      lineas.appendChild(div);
+      const inp = div.querySelector('.l-texto');
+      autocompletarRepuesto(inp, {
+        alElegir: r => { inp.dataset.codigo = r.codigo; div.querySelector('.l-cant').focus(); },
+        alEscribir: () => { delete inp.dataset.codigo; }
+      });
+      return inp;
+    };
+    agregarLinea();
+    const actualizar = () => {
+      const m = main.querySelector('input[name=motivo]:checked').value;
+      document.getElementById('p-repuestos').classList.toggle('oculto', m !== 'FALTA DE REPUESTO');
+      const et = document.getElementById('p-detalle-et');
+      et.textContent = m === 'OTRO' ? 'Motivo' : 'Detalle (opcional)';
+      et.classList.toggle('obligatorio', m === 'OTRO');
+    };
+    actualizar();
+    on(main, 'change', 'input[name=motivo]', actualizar);
+    on(main, 'click', '[data-accion=linea]', () => agregarLinea().focus());
+    // Enter en una línea de repuesto no envía el formulario.
+    on(main, 'keydown', '.l-texto, .l-cant', ev => { if (ev.key === 'Enter') ev.preventDefault(); });
+    on(main, 'click', '[data-quitar-linea]', (ev, b) => {
+      b.closest('.linea-pedido').remove();
+      if (!lineas.children.length) agregarLinea();
+    });
+    document.getElementById('f-pausa').addEventListener('submit', async ev => {
+      ev.preventDefault();
+      const err = document.getElementById('p-error');
+      const mostrar = m => { err.textContent = m; err.classList.remove('oculto'); };
+      err.classList.add('oculto');
+      const motivo = main.querySelector('input[name=motivo]:checked').value;
+      const detalle = document.getElementById('p-detalle').value.trim();
+      if (motivo === 'OTRO' && !detalle) return mostrar('Escribí el motivo de la pausa.');
+      let repuestos = [];
+      if (motivo === 'FALTA DE REPUESTO') {
+        for (const div of lineas.querySelectorAll('.linea-pedido')) {
+          const inp = div.querySelector('.l-texto');
+          const texto = inp.value.trim();
+          const cant = parseNum(div.querySelector('.l-cant').value);
+          if (!texto) continue;
+          if (!(cant > 0)) return mostrar('Revisá las cantidades: tienen que ser mayores a cero.');
+          repuestos.push(inp.dataset.codigo ? { codigo: inp.dataset.codigo, texto, cantidad: cant } : { texto, cantidad: cant });
+        }
+        if (!repuestos.length) return mostrar('Indicá qué repuesto falta.');
+      }
+      const btn = ev.target.querySelector('button[type=submit]');
+      btn.disabled = true;
+      try {
+        await Api.rpc('pausar_ot', { p_ot_id: ot.id, p_motivo: motivo, p_detalle: detalle || null,
+                                     p_repuestos: repuestos, p_tarea_id: tareaId ? Number(tareaId) : null });
+        toast(motivo === 'FALTA DE REPUESTO' ? 'OT pausada. El pedido le llegó a Depósito.' : 'OT pausada');
+        ir(volver);
+      } catch (e) { mostrar(errMsg(e)); btn.disabled = false; }
+    });
+  }, ['MECANICO']);
+
   // ---------------- Escanear repuesto ----------------
   function cargarScript(src) {
     return new Promise((res, rej) => {
@@ -192,8 +304,8 @@
       <div class="camara" id="camara"><div>Iniciando cámara…</div></div>
       <div class="nota" id="estado-camara" style="margin:8px 0 12px">Apuntá al código de barras del repuesto.</div>
       <form id="f-codigo" class="campo">
-        <label for="codigo">O escribí el código</label>
-        <div style="display:flex;gap:8px"><input id="codigo" autocomplete="off" autocapitalize="characters" spellcheck="false">
+        <label for="codigo">O buscalo: escribí el código o la descripción</label>
+        <div style="display:flex;gap:8px"><input id="codigo" autocapitalize="characters" spellcheck="false" placeholder="Ej.: A906 o filtro aceite">
           <button class="btn" type="submit">Buscar</button></div>
       </form>
       <div id="resultado"></div>`;
@@ -214,7 +326,7 @@
       catch (e) { res.innerHTML = `<div class="error-box">${esc(errMsg(e))}</div>`; return; }
       const r = filas && filas[0];
       if (!r) {
-        res.innerHTML = `<div class="error-box">No existe un repuesto con el código <b>${esc(codigo)}</b>. Pedile a Depósito que lo cargue.</div>
+        res.innerHTML = `<div class="error-box">No existe un repuesto con el código <b>${esc(codigo)}</b>. Probá escribir parte del código o de la descripción y elegilo de la lista.</div>
           <button class="btn" data-accion="otro">Escanear otro</button>`;
         return;
       }
@@ -229,7 +341,7 @@
             <button class="btn" type="button" data-paso="1" aria-label="Sumar">+</button></div></div>
         <div class="error-box oculto" id="err-cargar"></div>
         <button class="btn btn-primario btn-grande" data-accion="cargar" ${disp > 0 ? '' : 'disabled'}>Cargar a la tarea</button>
-        ${disp > 0 ? '' : '<div class="nota" style="margin-top:8px">No hay stock: no se puede cargar.</div>'}
+        ${disp > 0 ? '' : '<div class="nota" style="margin-top:8px">No hay stock: no se puede cargar. Si lo necesitás, pausá la OT por falta de repuesto y pedilo.</div>'}
         <button class="btn" style="margin-top:8px;width:100%" data-accion="otro">Escanear otro</button>
       </section>`;
       res.dataset.codigo = r.codigo;
@@ -240,7 +352,7 @@
     async function iniciarCamara() {
       const cont = document.getElementById('camara');
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        cont.innerHTML = '<div style="padding:16px;text-align:center">La cámara no está disponible. Escribí el código abajo.</div>';
+        cont.innerHTML = '<div style="padding:16px;text-align:center">La cámara no está disponible. Buscá el repuesto abajo.</div>';
         return;
       }
       const alDetectar = texto => {
@@ -285,10 +397,11 @@
         await lector.start({ facingMode: 'environment' }, { fps: 10, qrbox: { width: 260, height: 120 } },
           texto => { if (activo) alDetectar(texto); }, () => {});
       } catch (e) {
-        cont.innerHTML = `<div style="padding:16px;text-align:center">No se pudo usar la cámara${e && e.name === 'NotAllowedError' ? ' (permiso denegado)' : ''}. Escribí el código abajo.</div>`;
+        cont.innerHTML = `<div style="padding:16px;text-align:center">No se pudo usar la cámara${e && e.name === 'NotAllowedError' ? ' (permiso denegado)' : ''}. Buscá el repuesto abajo.</div>`;
       }
     }
 
+    autocompletarRepuesto(document.getElementById('codigo'), { alElegir: r => { detener(); buscar(r.codigo); } });
     document.getElementById('f-codigo').addEventListener('submit', ev => { ev.preventDefault(); detener(); buscar(document.getElementById('codigo').value); });
     on(main, 'click', '[data-paso]', (ev, b) => {
       const inp = document.getElementById('cant');
@@ -341,6 +454,8 @@
           <input id="propuesta" list="dl-temp" placeholder="Buscá en el tempario o escribila" autocomplete="off">
           <datalist id="dl-temp">${[...opciones.keys()].map(k => `<option value="${esc(k)}"></option>`).join('')}</datalist>
           <div class="nota">Tempario de unidad ${esc(ot.tipo.toLowerCase())}.</div></div>
+        <div class="campo" style="max-width:200px"><label for="sol-cant">Cantidad (ej. 2 si es "por lado")</label>
+          <input id="sol-cant" value="1" inputmode="decimal" autocomplete="off"></div>
         <div class="error-box oculto" id="err-sol"></div>
         <button class="btn btn-primario btn-grande" type="submit">Enviar a Oficina</button>
       </form>`;
@@ -348,14 +463,16 @@
       ev.preventDefault();
       const falla = document.getElementById('falla').value.trim();
       const prop = document.getElementById('propuesta').value.trim();
+      const cant = parseNum(document.getElementById('sol-cant').value);
       const err = document.getElementById('err-sol');
       if (!falla || !prop) { err.textContent = 'Completá la falla y la tarea propuesta.'; err.classList.remove('oculto'); return; }
+      if (!(cant > 0)) { err.textContent = 'La cantidad tiene que ser mayor a cero.'; err.classList.remove('oculto'); return; }
       const elegido = opciones.get(prop);
       const btn = ev.target.querySelector('button[type=submit]');
       btn.disabled = true;
       try {
         await Api.insert('solicitudes', {
-          ot_id: ot.id, tarea_origen_id: tareaId ? Number(tareaId) : null, falla,
+          ot_id: ot.id, tarea_origen_id: tareaId ? Number(tareaId) : null, falla, cantidad: cant,
           tarea_propuesta: elegido ? elegido.tarea : prop, tempario_id: elegido ? elegido.id : null
         });
         toast('Solicitud enviada a Oficina');
@@ -364,21 +481,206 @@
     });
   }, ['MECANICO']);
 
+  // ---------------- Pedir una OT nueva (la acepta el Administrador) ----------------
+  ruta(/^#\/pedir-ot$/, async main => {
+    const clientes = await Api.select('clientes', { select: 'id,nombre', order: 'nombre' });
+    const s = { unidades: [], unidad: null, tipo: '', tareas: [], repuestos: [], temp: [] };
+
+    main.innerHTML = `
+      <div class="encabezado"><div><h1>Pedir OT nueva</h1>
+        <div class="sub">Cargá todo lo que sepas. La OT se crea cuando el Administrador la acepta.</div></div></div>
+      <form id="f-pedir">
+        <section class="tarjeta"><h2>Vehículo</h2>
+          <div class="campo"><label for="q-cliente" class="obligatorio">Cliente</label><select id="q-cliente">
+            <option value="">Elegí un cliente…</option>${clientes.map(c => `<option value="${c.id}">${esc(c.nombre)}</option>`).join('')}</select></div>
+          <div class="campo"><label for="q-unidad" class="obligatorio">Dominio</label>
+            <select id="q-unidad" disabled><option value="">Elegí primero el cliente</option></select></div>
+          <label class="check" style="margin-bottom:10px"><input type="checkbox" id="q-nueva"> La unidad no está en la lista</label>
+          <div class="campo oculto" id="q-texto-caja"><label for="q-texto" class="obligatorio">Describí la unidad</label>
+            <input id="q-texto" placeholder="Cliente, dominio, marca y modelo"></div>
+          <div class="fila-campos">
+            <div class="campo"><label for="q-tipo" class="obligatorio">Tipo de unidad</label><select id="q-tipo">
+              <option value="">Elegí…</option>${TIPOS.map(t => `<option>${t}</option>`).join('')}</select></div>
+            <div class="campo"><label for="q-km" class="obligatorio">KM</label><input id="q-km" inputmode="numeric" autocomplete="off"></div>
+          </div>
+        </section>
+        <section class="tarjeta"><h2>Trabajos</h2>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+            <input id="q-tarea" list="dl-q-tareas" placeholder="Elegí primero el tipo de unidad" autocomplete="off" disabled style="flex:3 1 220px">
+            <datalist id="dl-q-tareas"></datalist>
+            <input id="q-tarea-cant" value="1" inputmode="decimal" aria-label="Cantidad" style="flex:0 0 80px;text-align:center">
+            <button class="btn" type="button" data-accion="agregar-tarea">Agregar</button></div>
+          <div class="nota" style="margin-bottom:8px">Cantidad: por ejemplo 2 si la tarea es "por lado" y se hacen los dos lados.</div>
+          <div id="q-tareas"></div>
+        </section>
+        <section class="tarjeta"><h2>Repuestos <span class="nota">(opcional)</span></h2>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+            <input id="q-rep" placeholder="Código o descripción" style="flex:3 1 220px">
+            <input id="q-rep-cant" value="1" inputmode="decimal" aria-label="Cantidad" style="flex:0 0 80px;text-align:center">
+            <button class="btn" type="button" data-accion="agregar-rep">Agregar</button></div>
+          <div id="q-reps"></div>
+        </section>
+        <section class="tarjeta">
+          <div class="campo"><label for="q-obs">Observaciones</label><textarea id="q-obs"></textarea></div>
+          <div class="error-box oculto" id="q-error"></div>
+          <button class="btn btn-primario btn-grande" type="submit">Enviar al Administrador</button>
+        </section>
+      </form>`;
+    const $ = id => document.getElementById(id);
+    const pintarTareas = () => {
+      $('q-tareas').innerHTML = s.tareas.length ? s.tareas.map((t, i) => `<div class="repuesto-fila">
+        <div class="info"><div class="desc">${esc(t.descripcion)} <span style="color:var(--gris)">× ${num(t.cantidad)}</span></div>
+          <div class="cod">${t.tempario_id ? esc(t.categoria) + ' · ' + num(t.horas) + ' h c/u' : 'A mano · el Administrador pone las horas'}</div></div>
+        <button class="btn btn-chico" type="button" data-quitar-t="${i}">Quitar</button></div>`).join('')
+        : '<div class="vacio">Sin trabajos todavía.</div>';
+    };
+    const pintarReps = () => {
+      $('q-reps').innerHTML = s.repuestos.length ? s.repuestos.map((r, i) => `<div class="repuesto-fila">
+        <div class="info"><div class="desc">${esc(r.descripcion)} <span style="color:var(--gris)">× ${num(r.cantidad)}</span></div>
+          <div class="cod">Cód. ${esc(r.codigo)} · stock ${num(r.disponible)}</div></div>
+        <button class="btn btn-chico" type="button" data-quitar-r="${i}">Quitar</button></div>`).join('')
+        : '<div class="vacio">Sin repuestos.</div>';
+    };
+    pintarTareas(); pintarReps();
+    const cargarTempario = async () => {
+      const inp = $('q-tarea');
+      if (!s.tipo) { inp.disabled = true; $('dl-q-tareas').innerHTML = ''; return; }
+      s.temp = await Api.select('tempario', { select: 'id,tarea,horas,categoria:categorias_tempario(nombre)', tipo: 'eq.' + s.tipo, activo: 'is.true', order: 'tarea' });
+      $('dl-q-tareas').innerHTML = s.temp.map(x => `<option value="${esc(x.tarea + ' · ' + (x.categoria ? x.categoria.nombre : ''))}">${num(x.horas)} h</option>`).join('');
+      inp.disabled = false; inp.placeholder = 'Buscá en el tempario o escribila';
+    };
+    $('q-cliente').addEventListener('change', async ev => {
+      const sel = $('q-unidad');
+      s.unidad = null;
+      if (!ev.target.value) { sel.disabled = true; sel.innerHTML = '<option value="">Elegí primero el cliente</option>'; return; }
+      s.unidades = await Api.select('unidades', { select: 'id,dominio,interno,tipo', cliente_id: 'eq.' + ev.target.value, order: 'dominio' });
+      sel.disabled = $('q-nueva').checked;
+      sel.innerHTML = `<option value="">${s.unidades.length ? 'Elegí el dominio…' : 'Este cliente no tiene unidades'}</option>` +
+        s.unidades.map(u => `<option value="${u.id}">${esc(u.dominio)}${u.interno ? ' · INT ' + esc(u.interno) : ''}</option>`).join('');
+    });
+    $('q-unidad').addEventListener('change', async ev => {
+      s.unidad = s.unidades.find(u => String(u.id) === ev.target.value) || null;
+      if (s.unidad && s.unidad.tipo && !s.tareas.length) { $('q-tipo').value = s.unidad.tipo; s.tipo = s.unidad.tipo; await cargarTempario(); }
+    });
+    $('q-nueva').addEventListener('change', ev => {
+      $('q-texto-caja').classList.toggle('oculto', !ev.target.checked);
+      $('q-unidad').disabled = ev.target.checked || !$('q-cliente').value;
+      if (ev.target.checked) { $('q-unidad').value = ''; s.unidad = null; $('q-texto').focus(); }
+    });
+    $('q-tipo').addEventListener('change', async ev => {
+      if (s.tareas.some(t => t.tempario_id) && ev.target.value !== s.tipo) {
+        const ok = await confirmar('Cambiar el tipo de unidad quita las tareas del tempario ya agregadas. ¿Seguir?');
+        if (!ok) { ev.target.value = s.tipo; return; }
+        s.tareas = s.tareas.filter(t => !t.tempario_id); pintarTareas();
+      }
+      s.tipo = ev.target.value; await cargarTempario();
+    });
+    const agregarTarea = () => {
+      const texto = $('q-tarea').value.trim();
+      const cant = parseNum($('q-tarea-cant').value);
+      if (!texto) return;
+      if (!(cant > 0)) return toast('La cantidad tiene que ser mayor a cero', 'error');
+      const x = s.temp.find(y => `${y.tarea} · ${y.categoria ? y.categoria.nombre : ''}` === texto)
+        || s.temp.filter(y => y.tarea.toUpperCase() === texto.toUpperCase()).find((y, i, arr) => arr.length === 1);
+      s.tareas.push(x ? { tempario_id: x.id, descripcion: x.tarea, horas: Number(x.horas), cantidad: cant, categoria: x.categoria ? x.categoria.nombre : '' }
+                      : { descripcion: texto, cantidad: cant });
+      $('q-tarea').value = ''; $('q-tarea-cant').value = '1'; pintarTareas(); $('q-tarea').focus();
+    };
+    let repElegido = null;
+    autocompletarRepuesto($('q-rep'), { alElegir: r => { repElegido = r; $('q-rep-cant').focus(); $('q-rep-cant').select(); },
+                                       alEscribir: () => { repElegido = null; } });
+    const agregarRep = async () => {
+      const cant = parseNum($('q-rep-cant').value);
+      const texto = $('q-rep').value.trim();
+      if (!texto) return;
+      if (!(cant > 0)) return toast('La cantidad tiene que ser mayor a cero', 'error');
+      let r = repElegido;
+      if (!r) { try { r = (await Api.rpc('consultar_stock', { p_codigo: texto }))[0]; } catch (e) { r = null; } }
+      if (!r) return toast('Elegí el repuesto de la lista. Si no está, anotalo en Observaciones.', 'error');
+      s.repuestos.push({ codigo: r.codigo, descripcion: r.descripcion, cantidad: cant, disponible: Number(r.disponible) });
+      repElegido = null; $('q-rep').value = ''; $('q-rep-cant').value = '1'; pintarReps(); $('q-rep').focus();
+    };
+    on(main, 'click', '[data-accion=agregar-tarea]', agregarTarea);
+    on(main, 'click', '[data-accion=agregar-rep]', agregarRep);
+    $('q-tarea').addEventListener('keydown', ev => { if (ev.key === 'Enter') { ev.preventDefault(); agregarTarea(); } });
+    $('q-rep-cant').addEventListener('keydown', ev => { if (ev.key === 'Enter') { ev.preventDefault(); agregarRep(); } });
+    $('q-rep').addEventListener('keydown', ev => { if (ev.key === 'Enter' && !ev.defaultPrevented) { ev.preventDefault(); agregarRep(); } });
+    $('q-tarea-cant').addEventListener('keydown', ev => { if (ev.key === 'Enter') { ev.preventDefault(); agregarTarea(); } });
+    on(main, 'click', '[data-quitar-t]', (ev, b) => { s.tareas.splice(Number(b.dataset.quitarT), 1); pintarTareas(); });
+    on(main, 'click', '[data-quitar-r]', (ev, b) => { s.repuestos.splice(Number(b.dataset.quitarR), 1); pintarReps(); });
+    $('f-pedir').addEventListener('submit', async ev => {
+      ev.preventDefault();
+      const err = $('q-error');
+      const nueva = $('q-nueva').checked;
+      const falta = [];
+      if (!nueva && !$('q-cliente').value) falta.push('cliente');
+      if (!nueva && !s.unidad) falta.push('dominio');
+      if (nueva && !$('q-texto').value.trim()) falta.push('descripción de la unidad');
+      if (!$('q-tipo').value) falta.push('tipo de unidad');
+      const km = parseInt(String($('q-km').value).replace(/\D/g, ''), 10);
+      if (isNaN(km)) falta.push('KM');
+      if (!s.tareas.length && !s.repuestos.length) falta.push('al menos un trabajo o repuesto');
+      if (falta.length) { err.textContent = 'Falta: ' + falta.join(', ') + '.'; err.classList.remove('oculto'); return; }
+      err.classList.add('oculto');
+      const btn = ev.target.querySelector('button[type=submit]');
+      btn.disabled = true;
+      try {
+        const cliente = clientes.find(c => String(c.id) === $('q-cliente').value);
+        await Api.insert('solicitudes_de_ot', {
+          mecanico_id: st.usuarioId,
+          unidad_id: nueva ? null : s.unidad.id,
+          unidad_texto: nueva ? [cliente ? cliente.nombre : '', $('q-texto').value.trim()].filter(Boolean).join(' · ') : null,
+          km, tipo: $('q-tipo').value, observaciones: $('q-obs').value.trim() || null,
+          tareas: s.tareas.map(t => t.tempario_id
+            ? { tempario_id: t.tempario_id, descripcion: t.descripcion, horas: t.horas, cantidad: t.cantidad, categoria: t.categoria }
+            : { descripcion: t.descripcion, cantidad: t.cantidad }),
+          repuestos: s.repuestos.map(r => ({ codigo: r.codigo, descripcion: r.descripcion, cantidad: r.cantidad }))
+        });
+        toast('Pedido de OT enviado al Administrador');
+        ir('#/mis-solicitudes');
+      } catch (e) { err.textContent = errMsg(e); err.classList.remove('oculto'); btn.disabled = false; }
+    });
+  }, ['MECANICO']);
+
   // ---------------- Mis solicitudes ----------------
   ruta(/^#\/mis-solicitudes$/, async main => {
-    const sols = await Api.select('solicitudes', {
-      select: 'id,falla,tarea_propuesta,estado,motivo_rechazo,creado_en,ot:ordenes_trabajo(numero)',
-      mecanico_id: 'eq.' + st.usuarioId, order: 'creado_en.desc', limit: 50 });
-    const chip = e => e === 'APROBADA' ? '<span class="chip verde">Aprobada</span>' :
+    const [sols, ots, pedidos] = await Promise.all([
+      Api.select('solicitudes', { select: 'id,falla,tarea_propuesta,cantidad,estado,motivo_rechazo,creado_en,ot:ordenes_trabajo(numero)',
+                                  mecanico_id: 'eq.' + st.usuarioId, order: 'creado_en.desc', limit: 30 }),
+      Api.select('solicitudes_de_ot', { select: 'id,unidad_texto,km,tipo,tareas,repuestos,estado,motivo_rechazo,creado_en,unidad:unidades(dominio),ot:ordenes_trabajo(numero)',
+                                        mecanico_id: 'eq.' + st.usuarioId, order: 'creado_en.desc', limit: 20 }),
+      Api.select('pedidos_repuesto', { select: 'descripcion,codigo,cantidad,estado,nota,creado_en,ot:ordenes_trabajo(numero)',
+                                       pedido_por: 'eq.' + st.usuarioId, order: 'creado_en.desc', limit: 20 })
+    ]);
+    const chip = e => e === 'APROBADA' ? '<span class="chip verde">Aceptada</span>' :
       e === 'RECHAZADA' ? '<span class="chip rojo">Rechazada</span>' : '<span class="chip">Pendiente</span>';
     main.innerHTML = `
-      <div class="encabezado"><div><h1>Mis solicitudes</h1><div class="sub">Para pedir una tarea nueva, entrá a una de tus tareas.</div></div></div>
+      <div class="encabezado"><div><h1>Mis solicitudes</h1><div class="sub">Para pedir una tarea en una OT, entrá a una de tus tareas.</div></div>
+        <div class="acciones"><a class="btn btn-primario" href="#/pedir-ot">Pedir OT nueva</a></div></div>
+      <h2 style="margin:6px 0 10px">Pedidos de OT</h2>
+      <div class="lista-tareas">${ots.length ? ots.map(s => `
+        <div class="tarea-card">
+          <div class="linea1"><span>${fechaHora(s.creado_en)} · ${esc(s.tipo)} · KM ${num(s.km, 0)}</span>${chip(s.estado)}</div>
+          <div class="titulo">${esc(s.unidad ? s.unidad.dominio : s.unidad_texto)}</div>
+          <div class="linea3">${s.tareas.length} trabajos · ${s.repuestos.length} repuestos${s.ot ? ' · se creó la <b>' + esc(nroOT(s.ot.numero)) + '</b>' : ''}</div>
+          ${s.estado === 'RECHAZADA' ? `<div class="linea3"><b>Motivo:</b> ${esc(s.motivo_rechazo)}</div>` : ''}
+        </div>`).join('') : '<div class="tarjeta vacio">No pediste OT.</div>'}</div>
+      <h2 style="margin:20px 0 10px">Tareas pedidas</h2>
       <div class="lista-tareas">${sols.length ? sols.map(s => `
         <div class="tarea-card">
           <div class="linea1"><span>${esc(nroOT(s.ot ? s.ot.numero : ''))} · ${fechaHora(s.creado_en)}</span>${chip(s.estado)}</div>
-          <div class="titulo">${esc(s.tarea_propuesta)}</div>
+          <div class="titulo">${esc(s.tarea_propuesta)}${Number(s.cantidad) !== 1 ? ' × ' + num(s.cantidad) : ''}</div>
           <div class="linea3">Falla: ${esc(s.falla)}</div>
           ${s.estado === 'RECHAZADA' ? `<div class="linea3"><b>Motivo:</b> ${esc(s.motivo_rechazo)}</div>` : ''}
-        </div>`).join('') : '<div class="tarjeta vacio">No enviaste solicitudes.</div>'}</div>`;
+        </div>`).join('') : '<div class="tarjeta vacio">No pediste tareas.</div>'}</div>
+      <h2 style="margin:20px 0 10px">Repuestos pedidos</h2>
+      <div class="lista-tareas">${pedidos.length ? pedidos.map(p => `
+        <div class="tarea-card">
+          <div class="linea1"><span>${esc(nroOT(p.ot ? p.ot.numero : ''))} · ${fechaHora(p.creado_en)}</span>
+            ${p.estado === 'RESUELTO' ? '<span class="chip verde">Ya está</span>' : '<span class="chip">Pedido</span>'}</div>
+          <div class="titulo">${esc(p.descripcion)} × ${num(p.cantidad)}</div>
+          ${p.codigo ? `<div class="linea3">Cód. ${esc(p.codigo)}</div>` : ''}
+          ${p.nota ? `<div class="linea3">Depósito: ${esc(p.nota)}</div>` : ''}
+        </div>`).join('') : '<div class="tarjeta vacio">No pediste repuestos.</div>'}</div>`;
   }, ['MECANICO']);
 })();

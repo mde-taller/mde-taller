@@ -1,7 +1,7 @@
 // Guarda la app en el celular para que abra rápido. Los datos siempre se piden en línea.
-const VERSION = 'mde-taller-v1';
+const VERSION = 'mde-taller-v2';
 const ARCHIVOS = ['./', 'index.html', 'css/app.css', 'js/config.js', 'js/api.js', 'js/app.js',
-  'js/v-mecanico.js', 'js/v-oficina.js', 'js/v-stock.js', 'js/v-admin.js', 'manifest.webmanifest',
+  'js/v-mecanico.js', 'js/v-oficina.js', 'js/v-clientes.js', 'js/v-stock.js', 'js/v-admin.js', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png'];
 
 self.addEventListener('install', ev => {

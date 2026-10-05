@@ -13,12 +13,21 @@ const cors = {
 const json = (cuerpo: unknown, status = 200) =>
   new Response(JSON.stringify(cuerpo), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
 
+// Clave de servicio: la pone Supabase en el entorno de la función (formato nuevo o anterior).
+function claveServicio(): string {
+  const directa = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  if (directa) return directa;
+  try {
+    const nuevas = JSON.parse(Deno.env.get('SUPABASE_SECRET_KEYS') || '{}');
+    return nuevas.default || Object.values(nuevas)[0] as string || '';
+  } catch { return ''; }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   if (req.method !== 'POST') return json({ error: 'Método no permitido' }, 405);
   try {
-    const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
-                               { auth: { persistSession: false } });
+    const admin = createClient(Deno.env.get('SUPABASE_URL')!, claveServicio(), { auth: { persistSession: false } });
     const jwt = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '');
     const { data: quien } = await admin.auth.getUser(jwt);
     if (!quien?.user) return json({ error: 'Tenés que iniciar sesión' }, 401);

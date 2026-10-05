@@ -21,11 +21,16 @@
     return String(texto || '').split(/\r?\n/).map(l => l.split(/\t|;/).map(x => x.trim())).filter(c => c.some(Boolean));
   }
 
+  let primeraVez = true;
   ruta(/^#\/stock$/, async main => {
     const edita = tiene('DEPOSITO') || esAdmin();
-    if (!edita) pestana = 'buscar';
-    const tabs = [['buscar', 'Buscar stock']].concat(edita ? [['lote', 'Ingreso por lote'], ['ajuste', 'Ajuste o stock inicial'],
-      ['nuevo', 'Nuevo repuesto']] : []).concat([['movs', 'Movimientos']]);
+    const pendientes = await Api.select('pedidos_repuesto', { select: 'id', estado: 'eq.PENDIENTE' });
+    if (!edita && !['buscar', 'movs', 'pedidos'].includes(pestana)) pestana = 'buscar';
+    if (primeraVez && pendientes.length) pestana = 'pedidos';
+    primeraVez = false;
+    const tabs = [['buscar', 'Buscar stock'], ['pedidos', `Pedidos de repuestos${pendientes.length ? ' (' + pendientes.length + ')' : ''}`]]
+      .concat(edita ? [['lote', 'Ingreso por lote'], ['ajuste', 'Ajuste o stock inicial'], ['nuevo', 'Nuevo repuesto']] : [])
+      .concat([['movs', 'Movimientos']]);
     main.innerHTML = `
       <div class="encabezado"><div><h1>Stock y repuestos</h1>
         <div class="sub">${edita ? 'Las salidas se descuentan solas cuando se cargan repuestos en una OT.' : 'Consulta de stock.'}</div></div></div>
@@ -143,17 +148,59 @@
       });
     }
 
+    // ---- Pedidos de repuestos de los mecánicos ----
+    if (pestana === 'pedidos') {
+      const pedidos = await Api.select('pedidos_repuesto', {
+        select: 'id,descripcion,codigo,cantidad,estado,nota,creado_en,resuelto_en,ot:ordenes_trabajo(id,numero,unidad:unidades(dominio)),' +
+                'pedidor:usuarios!pedidos_repuesto_pedido_por_fkey(nombre),resolvio:usuarios!pedidos_repuesto_resuelto_por_fkey(nombre)',
+        order: 'estado.asc,creado_en.desc', limit: 80 });
+      const codigos = [...new Set(pedidos.filter(p => p.codigo && p.estado === 'PENDIENTE').map(p => p.codigo))];
+      const stock = codigos.length ? await Api.select('stock_disponible', { select: 'codigo,disponible',
+        codigo: 'in.(' + codigos.map(c => '"' + c.replace(/"/g, '') + '"').join(',') + ')' }) : [];
+      const disp = new Map(stock.map(x => [x.codigo, Number(x.disponible)]));
+      const pend = pedidos.filter(p => p.estado === 'PENDIENTE'), hechos = pedidos.filter(p => p.estado !== 'PENDIENTE').slice(0, 30);
+      cont.innerHTML = `
+        <p class="nota" style="margin-top:0">Los piden los mecánicos al pausar una OT por falta de repuesto. Cuando lo tengas, marcalo como resuelto: le llega el aviso al mecánico.</p>
+        <div class="tabla-caja" style="margin-bottom:20px"><table><thead><tr><th>Pedido</th><th>Repuesto</th><th class="num">Cant.</th><th class="num">Stock</th><th>OT</th><th>Pidió</th>${edita ? '<th></th>' : ''}</tr></thead><tbody>
+          ${pend.map(p => `<tr><td>${fechaHora(p.creado_en)}</td>
+            <td><b>${esc(p.descripcion)}</b><div class="nota">${p.codigo ? esc(p.codigo) : 'No está en la lista: hay que conseguirlo'}</div></td>
+            <td class="num">${num(p.cantidad)}</td>
+            <td class="num">${p.codigo ? `<b style="color:${(disp.get(p.codigo) || 0) >= Number(p.cantidad) ? 'var(--verde)' : 'var(--rojo)'}">${num(disp.get(p.codigo) || 0)}</b>` : '—'}</td>
+            <td>${p.ot ? `<a href="#/ot/${p.ot.id}">${esc(nroOT(p.ot.numero))}</a><div class="nota">${esc(p.ot.unidad ? p.ot.unidad.dominio : '')}</div>` : ''}</td>
+            <td>${esc(p.pedidor ? p.pedidor.nombre : '')}</td>
+            ${edita ? `<td><button class="btn btn-verde btn-chico" data-resolver="${p.id}">Resuelto</button></td>` : ''}</tr>`).join('')
+            || `<tr><td colspan="7" class="vacio">No hay pedidos pendientes.</td></tr>`}
+        </tbody></table></div>
+        <h2 style="margin:0 0 10px">Resueltos</h2>
+        <div class="tabla-caja"><table><thead><tr><th>Resuelto</th><th>Repuesto</th><th class="num">Cant.</th><th>OT</th><th>Pidió</th><th>Resolvió</th></tr></thead><tbody>
+          ${hechos.map(p => `<tr><td>${fechaHora(p.resuelto_en)}</td><td>${esc(p.descripcion)}${p.nota ? `<div class="nota">${esc(p.nota)}</div>` : ''}</td>
+            <td class="num">${num(p.cantidad)}</td><td>${p.ot ? esc(nroOT(p.ot.numero)) : ''}</td><td>${esc(p.pedidor ? p.pedidor.nombre : '')}</td>
+            <td>${esc(p.resolvio ? p.resolvio.nombre : '')}</td></tr>`).join('') || '<tr><td colspan="6" class="vacio">Sin pedidos resueltos.</td></tr>'}
+        </tbody></table></div>`;
+      on(cont, 'click', '[data-resolver]', async (ev, b) => {
+        const p = pend.find(x => String(x.id) === b.dataset.resolver);
+        const v = await App.modal({ titulo: 'Pedido resuelto', textoOk: 'Marcar resuelto',
+          html: `<p><b>${esc(p.descripcion)}</b> × ${num(p.cantidad)} para ${esc(p.ot ? nroOT(p.ot.numero) : '')}</p>
+                 <p class="nota">Si entró al depósito, cargalo antes en "Ingreso por lote" para que tenga stock.</p>`,
+          campos: [{ id: 'nota', label: 'Nota para el mecánico (opcional)', valor: '' }] });
+        if (!v) return;
+        try { await Api.rpc('resolver_pedido_repuesto', { p_id: p.id, p_nota: v.nota.trim() || null }); toast('Pedido resuelto: se avisó al mecánico'); navegar(); }
+        catch (e) { toast(errMsg(e), 'error'); }
+      });
+    }
+
     // ---- Ajuste / stock inicial ----
     if (pestana === 'ajuste') {
       cont.innerHTML = `<form id="f-ajuste" class="tarjeta" style="max-width:560px"><h2>Ajuste o stock inicial</h2>
         <div class="campo"><label for="a-tipo">Tipo</label><select id="a-tipo">
           <option value="AJUSTE">Ajuste (suma o resta: usá negativo para restar)</option>
           <option value="STOCK INICIAL">Stock inicial (se carga una sola vez por repuesto)</option></select></div>
-        <div class="campo"><label for="a-cod" class="obligatorio">Código</label><input id="a-cod" autocomplete="off"></div>
+        <div class="campo"><label for="a-cod" class="obligatorio">Código</label><input id="a-cod" placeholder="Código o descripción"></div>
         <div class="campo"><label for="a-cant" class="obligatorio">Cantidad</label><input id="a-cant" inputmode="decimal" autocomplete="off" placeholder="Ej.: 5  ó  -2"></div>
         <div class="campo"><label for="a-obs" class="obligatorio">Motivo</label><input id="a-obs" placeholder="Conteo, rotura, corrección…"></div>
         <div id="a-info"></div>
         <button class="btn btn-primario" type="submit">Guardar</button></form>`;
+      App.autocompletarRepuesto(document.getElementById('a-cod'), { alElegir: () => document.getElementById('a-cant').focus() });
       document.getElementById('f-ajuste').addEventListener('submit', async ev => {
         ev.preventDefault();
         const tipo = document.getElementById('a-tipo').value;
