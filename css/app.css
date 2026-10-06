@@ -184,6 +184,7 @@ tr.bien td { background: #F1F9F3; }
 .ac-desc { grid-column: 1 / -1; font-size: 14px; color: var(--gris); }
 .ac-stock { font-size: 12px; font-weight: 600; color: var(--rojo); white-space: nowrap; align-self: center; }
 .ac-stock.hay { color: var(--verde); }
+.ac-tag { font-size: 12px; font-weight: 600; color: var(--gris); white-space: nowrap; align-self: center; text-transform: uppercase; }
 .ac-vacio { padding: 12px; color: var(--gris); font-size: 14px; }
 .ac-lista mark { background: #FDE7B0; color: inherit; padding: 0; border-radius: 2px; }
 

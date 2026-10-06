@@ -151,9 +151,8 @@ window.App = (() => {
   }
   const confirmar = (mensaje, opciones) => modal(Object.assign({ titulo: 'Confirmar', html: `<p>${esc(mensaje)}</p>` }, opciones || {}));
 
-  // ---------------- Buscador desplegable de repuestos ----------------
-  // Mientras se escribe el código o la descripción, muestra los repuestos que coinciden.
-  // alElegir(repuesto) recibe { codigo, descripcion, disponible }.
+  // ---------------- Buscadores desplegables (repuestos y unidades) ----------------
+  // Mientras se escribe, muestran lo que coincide. alElegir(item) recibe el elegido.
   let acContador = 0;
   function resaltar(texto, buscado) {
     const t = String(texto || '');
@@ -176,7 +175,10 @@ window.App = (() => {
     const ini = mapa[p], fin = mapa[p + limpio.length - 1] + 1;
     return esc(c.slice(0, ini)) + '<mark>' + esc(c.slice(ini, fin)) + '</mark>' + esc(c.slice(fin));
   }
-  function autocompletarRepuesto(input, { alElegir, alEscribir } = {}) {
+  // Buscador genérico: muestra una lista mientras se escribe.
+  //   buscar(texto) -> Promise<items>, fila(item, texto) -> html, valor(item) -> texto que queda en el campo
+  //   minimo: letras mínimas para buscar (número o función; 0 = muestra la lista al entrar al campo)
+  function autocompletar(input, { buscar, fila, valor, vacio, minimo = 2, alElegir, alEscribir }) {
     const id = 'ac-' + (++acContador);
     const caja = document.createElement('div');
     caja.className = 'ac-caja';
@@ -192,7 +194,8 @@ window.App = (() => {
     input.setAttribute('aria-autocomplete', 'list');
     input.setAttribute('aria-controls', id);
     input.setAttribute('aria-expanded', 'false');
-    let items = [], activo = -1, timer = null, consulta = 0, buscado = '';
+    let items = [], activo = -1, timer = null, consulta = 0, buscado = null;
+    const min = () => (typeof minimo === 'function' ? minimo() : minimo);
 
     const cerrar = () => { lista.classList.add('oculto'); input.setAttribute('aria-expanded', 'false'); activo = -1; };
     const marcar = i => {
@@ -202,47 +205,46 @@ window.App = (() => {
       if (li) { li.scrollIntoView({ block: 'nearest' }); input.setAttribute('aria-activedescendant', li.id); }
     };
     const pintar = () => {
-      if (!items.length) {
-        lista.innerHTML = `<li class="ac-vacio">No hay repuestos con "${esc(buscado)}"</li>`;
-      } else {
-        lista.innerHTML = items.map((r, i) => `<li role="option" id="${id}-${i}" data-i="${i}" aria-selected="false">
-          <span class="ac-cod">${resaltarCodigo(r.codigo, buscado)}</span>
-          <span class="ac-desc">${resaltar(r.descripcion, buscado)}</span>
-          <span class="ac-stock ${Number(r.disponible) > 0 ? 'hay' : ''}">Stock ${num(r.disponible)}</span></li>`).join('');
-      }
+      lista.innerHTML = items.length
+        ? items.map((x, i) => `<li role="option" id="${id}-${i}" data-i="${i}" aria-selected="false">${fila(x, buscado)}</li>`).join('')
+        : `<li class="ac-vacio">${esc(vacio(buscado))}</li>`;
       lista.classList.remove('oculto');
       input.setAttribute('aria-expanded', 'true');
       activo = -1;
     };
     const elegir = i => {
-      const r = items[i];
-      if (!r) return;
-      input.value = r.codigo;
+      const x = items[i];
+      if (!x) return;
+      input.value = valor(x);
       cerrar();
-      if (alElegir) alElegir(r);
+      if (alElegir) alElegir(x);
     };
-    const buscar = async () => {
-      buscado = input.value.trim();
-      if (buscado.length < 2) { cerrar(); return; }
+    const correr = async () => {
+      const texto = input.value.trim();
+      if (texto.length < min()) { cerrar(); return; }
       const n = ++consulta;
       try {
-        const r = await Api.rpc('buscar_repuestos', { p_texto: buscado, p_limite: 12 });
+        const r = await buscar(texto);
         if (n !== consulta || document.activeElement !== input) return;
-        items = r || [];
+        items = r || []; buscado = texto;
         pintar();
       } catch (e) { /* sin conexión: se ignora */ }
     };
     input.addEventListener('input', () => {
       clearTimeout(timer);
-      timer = setTimeout(buscar, 220);
+      timer = setTimeout(correr, 220);
       if (alEscribir) alEscribir(input.value);
     });
-    input.addEventListener('focus', () => { if (input.value.trim().length >= 2 && items.length) pintar(); });
+    input.addEventListener('focus', () => {
+      const texto = input.value.trim();
+      if (texto.length < min()) return;
+      if (buscado === texto && items.length) pintar(); else correr();
+    });
     input.addEventListener('keydown', ev => {
       const abierta = !lista.classList.contains('oculto') && items.length;
       if (ev.key === 'ArrowDown' && abierta) { ev.preventDefault(); marcar(Math.min(activo + 1, items.length - 1)); }
       else if (ev.key === 'ArrowUp' && abierta) { ev.preventDefault(); marcar(Math.max(activo - 1, 0)); }
-      else if (ev.key === 'Enter' && abierta && activo >= 0) { ev.preventDefault(); ev.stopPropagation(); elegir(activo); }
+      else if (ev.key === 'Enter' && abierta && (activo >= 0 || items.length === 1)) { ev.preventDefault(); ev.stopPropagation(); elegir(Math.max(activo, 0)); }
       else if (ev.key === 'Escape' && !lista.classList.contains('oculto')) { ev.stopPropagation(); cerrar(); }
     });
     lista.addEventListener('pointerdown', ev => {
@@ -251,7 +253,59 @@ window.App = (() => {
       if (li) elegir(Number(li.dataset.i));
     });
     input.addEventListener('blur', () => setTimeout(cerrar, 120));
-    return { cerrar, limpiar: () => { input.value = ''; items = []; cerrar(); } };
+    return { cerrar, limpiar: () => { input.value = ''; items = []; buscado = null; cerrar(); }, olvidar: () => { buscado = null; } };
+  }
+
+  function autocompletarRepuesto(input, { alElegir, alEscribir } = {}) {
+    return autocompletar(input, {
+      buscar: texto => Api.rpc('buscar_repuestos', { p_texto: texto, p_limite: 12 }),
+      fila: (r, b) => `<span class="ac-cod">${resaltarCodigo(r.codigo, b)}</span>
+          <span class="ac-stock ${Number(r.disponible) > 0 ? 'hay' : ''}">Stock ${num(r.disponible)}</span>
+          <span class="ac-desc">${resaltar(r.descripcion, b)}</span>`,
+      valor: r => r.codigo,
+      vacio: b => `No hay repuestos con "${b}"`,
+      alElegir, alEscribir
+    });
+  }
+
+  // ---------------- Buscador de unidades (dominio, INT o chasis) ----------------
+  const SEL_UNIDAD = 'id,dominio,interno,chasis,tipo,cliente_id,cliente:clientes(nombre),marca:marcas(nombre),modelo:modelos(nombre)';
+  const limpiarDominio = t => String(t || '').toUpperCase().replace(/[^A-Z0-9\-\/]/g, '');
+  async function buscarUnidades(texto, clienteId, limite = 20) {
+    const t = limpiarDominio(texto);
+    const params = { select: SEL_UNIDAD, order: 'dominio', limit: t ? 40 : limite };
+    if (clienteId) params.cliente_id = 'eq.' + clienteId;
+    if (t) params.or = `(dominio.ilike.*${t}*,interno.ilike.*${t}*,chasis.ilike.*${t}*)`;
+    const r = await Api.select('unidades', params);
+    if (!t) return r;
+    // Primero lo que coincide exacto, después lo que empieza igual, después el resto.
+    const puntaje = u => {
+      const d = limpiarDominio(u.dominio), i = limpiarDominio(u.interno);
+      if (d === t || i === t) return 0;
+      if (d.startsWith(t)) return 1;
+      if (i.startsWith(t)) return 2;
+      return d.includes(t) || i.includes(t) ? 3 : 4;
+    };
+    return r.sort((a, b) => puntaje(a) - puntaje(b)).slice(0, limite);
+  }
+  // Busca la unidad cuyo dominio o INT es exactamente el texto (si hay una sola).
+  async function unidadExacta(texto, clienteId) {
+    const t = limpiarDominio(texto);
+    if (!t) return null;
+    const r = (await buscarUnidades(t, clienteId, 40)).filter(u => limpiarDominio(u.dominio) === t || limpiarDominio(u.interno) === t);
+    return r.length === 1 ? r[0] : null;
+  }
+  function autocompletarUnidad(input, { clienteId = () => null, alElegir, alEscribir } = {}) {
+    return autocompletar(input, {
+      buscar: texto => buscarUnidades(texto, clienteId()),
+      minimo: () => (clienteId() ? 0 : 2),
+      fila: (u, b) => `<span class="ac-cod">${resaltarCodigo(u.dominio, b)}${u.interno ? ' · INT ' + resaltarCodigo(u.interno, b) : ''}</span>
+          <span class="ac-tag">${esc(u.cliente ? u.cliente.nombre : '')}</span>
+          <span class="ac-desc">${esc([u.marca && u.marca.nombre, u.modelo && u.modelo.nombre].filter(Boolean).join(' ') || 'Sin marca')}${u.chasis ? ' · Chasis ' + resaltarCodigo(u.chasis, b) : ''}</span>`,
+      valor: u => u.dominio,
+      vacio: b => b ? `No hay unidades con "${b}"` : 'Este cliente no tiene unidades cargadas',
+      alElegir, alEscribir
+    });
   }
 
   // ---------------- Estructura ----------------
@@ -504,6 +558,7 @@ window.App = (() => {
     st, cfg, esc, num, parseNum, nroOT, fecha, fechaHora, hoyISO, horaActual, duracion, tiene, esAdmin, esOficina,
     veTodas, limpiarCodigo, chipEstadoOT, chipEstadoTarea, errMsg, toast, modal, confirmar, ICONOS, ESTADOS_OT,
     TIPOS, ROLES, MOTIVOS, textoMotivo, pausaAbierta, chipPausa, autocompletarRepuesto,
+    autocompletarUnidad, unidadExacta,
     ruta, ir, on, navegar, actualizarAvisos, arrancar
   };
 })();

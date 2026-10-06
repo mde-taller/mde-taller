@@ -1,7 +1,8 @@
 // MDE · Taller — pantallas del mecánico (celular).
 (() => {
   const { st, esc, num, parseNum, nroOT, fechaHora, duracion, chipEstadoTarea, errMsg, toast, modal, confirmar,
-          ICONOS, MOTIVOS, textoMotivo, pausaAbierta, chipPausa, autocompletarRepuesto, TIPOS, ruta, ir, on, navegar } = App;
+          ICONOS, MOTIVOS, textoMotivo, pausaAbierta, chipPausa, autocompletarRepuesto, autocompletarUnidad, unidadExacta,
+          TIPOS, ruta, ir, on, navegar } = App;
 
   let pestana = 'pendientes';
   const hora = d => d ? new Date(d).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
@@ -485,17 +486,18 @@
   // ---------------- Pedir una OT nueva (la acepta el Administrador) ----------------
   ruta(/^#\/pedir-ot$/, async main => {
     const clientes = await Api.select('clientes', { select: 'id,nombre', order: 'nombre' });
-    const s = { unidades: [], unidad: null, tipo: '', tareas: [], repuestos: [], temp: [] };
+    const s = { unidad: null, tipo: '', tareas: [], repuestos: [], temp: [] };
 
     main.innerHTML = `
       <div class="encabezado"><div><h1>Pedir OT nueva</h1>
         <div class="sub">Cargá todo lo que sepas. La OT se crea cuando el Administrador la acepta.</div></div></div>
       <form id="f-pedir">
         <section class="tarjeta"><h2>Vehículo</h2>
-          <div class="campo"><label for="q-cliente" class="obligatorio">Cliente</label><select id="q-cliente">
-            <option value="">Elegí un cliente…</option>${clientes.map(c => `<option value="${c.id}">${esc(c.nombre)}</option>`).join('')}</select></div>
           <div class="campo"><label for="q-unidad" class="obligatorio">Dominio</label>
-            <select id="q-unidad" disabled><option value="">Elegí primero el cliente</option></select></div>
+            <input id="q-unidad" placeholder="Escribí dominio, INT o chasis" autocapitalize="characters"></div>
+          <div id="q-datos-unidad" class="nota" style="margin:-4px 0 10px"></div>
+          <div class="campo"><label for="q-cliente">Cliente</label><select id="q-cliente">
+            <option value="">Todos los clientes</option>${clientes.map(c => `<option value="${c.id}">${esc(c.nombre)}</option>`).join('')}</select></div>
           <label class="check" style="margin-bottom:10px"><input type="checkbox" id="q-nueva"> La unidad no está en la lista</label>
           <div class="campo oculto" id="q-texto-caja"><label for="q-texto" class="obligatorio">Describí la unidad</label>
             <input id="q-texto" placeholder="Cliente, dominio, marca y modelo"></div>
@@ -550,23 +552,29 @@
       $('dl-q-tareas').innerHTML = s.temp.map(x => `<option value="${esc(x.tarea + ' · ' + (x.categoria ? x.categoria.nombre : ''))}">${num(x.horas)} h</option>`).join('');
       inp.disabled = false; inp.placeholder = 'Buscá en el tempario o escribila';
     };
-    $('q-cliente').addEventListener('change', async ev => {
-      const sel = $('q-unidad');
-      s.unidad = null;
-      if (!ev.target.value) { sel.disabled = true; sel.innerHTML = '<option value="">Elegí primero el cliente</option>'; return; }
-      s.unidades = await Api.select('unidades', { select: 'id,dominio,interno,tipo', cliente_id: 'eq.' + ev.target.value, order: 'dominio' });
-      sel.disabled = $('q-nueva').checked;
-      sel.innerHTML = `<option value="">${s.unidades.length ? 'Elegí el dominio…' : 'Este cliente no tiene unidades'}</option>` +
-        s.unidades.map(u => `<option value="${u.id}">${esc(u.dominio)}${u.interno ? ' · INT ' + esc(u.interno) : ''}</option>`).join('');
+    const elegirUnidad = async u => {
+      s.unidad = u;
+      $('q-unidad').value = u ? u.dominio : '';
+      if (u) $('q-cliente').value = String(u.cliente_id);
+      $('q-datos-unidad').textContent = u ? [u.cliente && u.cliente.nombre, u.interno && 'INT ' + u.interno,
+        [u.marca && u.marca.nombre, u.modelo && u.modelo.nombre].filter(Boolean).join(' ')].filter(Boolean).join(' · ') : '';
+      if (u && u.tipo && !s.tareas.length) { $('q-tipo').value = u.tipo; s.tipo = u.tipo; await cargarTempario(); }
+    };
+    const bUnidad = autocompletarUnidad($('q-unidad'), {
+      clienteId: () => $('q-cliente').value,
+      alElegir: u => elegirUnidad(u),
+      alEscribir: () => { if (s.unidad) { s.unidad = null; $('q-datos-unidad').textContent = ''; } }
     });
-    $('q-unidad').addEventListener('change', async ev => {
-      s.unidad = s.unidades.find(u => String(u.id) === ev.target.value) || null;
-      if (s.unidad && s.unidad.tipo && !s.tareas.length) { $('q-tipo').value = s.unidad.tipo; s.tipo = s.unidad.tipo; await cargarTempario(); }
+    // Enter en el dominio no envía el pedido.
+    $('q-unidad').addEventListener('keydown', ev => { if (ev.key === 'Enter' && !ev.defaultPrevented) ev.preventDefault(); });
+    $('q-cliente').addEventListener('change', ev => {
+      bUnidad.olvidar();
+      if (s.unidad && String(s.unidad.cliente_id) !== ev.target.value) elegirUnidad(null);
     });
     $('q-nueva').addEventListener('change', ev => {
       $('q-texto-caja').classList.toggle('oculto', !ev.target.checked);
-      $('q-unidad').disabled = ev.target.checked || !$('q-cliente').value;
-      if (ev.target.checked) { $('q-unidad').value = ''; s.unidad = null; $('q-texto').focus(); }
+      $('q-unidad').disabled = ev.target.checked;
+      if (ev.target.checked) { elegirUnidad(null); $('q-texto').focus(); }
     });
     $('q-tipo').addEventListener('change', async ev => {
       if (s.tareas.some(t => t.tempario_id) && ev.target.value !== s.tipo) {
@@ -614,8 +622,11 @@
       const err = $('q-error');
       const nueva = $('q-nueva').checked;
       const falta = [];
-      if (!nueva && !$('q-cliente').value) falta.push('cliente');
-      if (!nueva && !s.unidad) falta.push('dominio');
+      if (!nueva && !s.unidad && $('q-unidad').value.trim()) {
+        const u = await unidadExacta($('q-unidad').value, $('q-cliente').value).catch(() => null);
+        if (u) await elegirUnidad(u);
+      }
+      if (!nueva && !s.unidad) falta.push('dominio (elegilo de la lista)');
       if (nueva && !$('q-texto').value.trim()) falta.push('descripción de la unidad');
       if (!$('q-tipo').value) falta.push('tipo de unidad');
       const km = parseInt(String($('q-km').value).replace(/\D/g, ''), 10);

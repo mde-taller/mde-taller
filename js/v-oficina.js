@@ -2,7 +2,7 @@
 (() => {
   const { st, cfg, esc, num, parseNum, nroOT, fecha, fechaHora, hoyISO, horaActual, esAdmin, esOficina,
           chipEstadoOT, chipEstadoTarea, errMsg, toast, modal, confirmar, ICONOS, ESTADOS_OT, TIPOS,
-          textoMotivo, pausaAbierta, chipPausa, autocompletarRepuesto, ruta, ir, on, navegar } = App;
+          textoMotivo, pausaAbierta, chipPausa, autocompletarRepuesto, autocompletarUnidad, unidadExacta, ruta, ir, on, navegar } = App;
 
   const cacheTempario = {};
   async function tempario(tipo) {
@@ -76,7 +76,7 @@
   // ---------------- Nueva OT ----------------
   ruta(/^#\/ot-nueva$/, async main => {
     const clientes = await Api.select('clientes', { select: 'id,nombre', order: 'nombre' });
-    const s = { unidades: [], unidad: null, tipo: '', tareas: [], repuestos: [] };
+    const s = { unidad: null, tipo: '', tareas: [], repuestos: [] };
 
     main.innerHTML = `
       <div class="encabezado"><div><h1>Nueva orden de trabajo</h1><div class="sub">Fecha de ingreso: hoy (${fecha(hoyISO())}). El número se asigna solo al guardar.</div></div></div>
@@ -84,12 +84,12 @@
         <div class="principal">
           <section class="tarjeta"><h2>Vehículo</h2>
             <div class="fila-campos">
-              <div class="campo"><label for="n-cliente" class="obligatorio">Cliente</label><select id="n-cliente">
-                <option value="">Elegí un cliente…</option>${clientes.map(c => `<option value="${c.id}">${esc(c.nombre)}</option>`).join('')}</select></div>
-              <div class="campo"><label for="n-unidad" class="obligatorio">Dominio</label><select id="n-unidad" disabled><option value="">Elegí primero el cliente</option></select></div>
+              <div class="campo"><label for="n-unidad" class="obligatorio">Dominio</label><input id="n-unidad" placeholder="Escribí dominio, INT o chasis"></div>
+              <div class="campo"><label for="n-cliente">Cliente</label><select id="n-cliente">
+                <option value="">Todos los clientes</option>${clientes.map(c => `<option value="${c.id}">${esc(c.nombre)}</option>`).join('')}</select></div>
             </div>
             <div id="n-datos-unidad" class="datos" style="margin-bottom:12px"></div>
-            <div class="nota" style="margin-bottom:12px">¿La unidad no está? Cargala en <a href="#/clientes">Clientes y unidades</a>.</div>
+            <div class="nota" style="margin-bottom:12px">Al elegir la unidad se completa el cliente. Si elegís primero el cliente, el buscador muestra solo sus unidades. ¿La unidad no está? Cargala en <a href="#/clientes">Clientes y unidades</a>.</div>
             <div class="fila-campos">
               <div class="campo"><label for="n-tipo" class="obligatorio">Tipo de unidad</label><select id="n-tipo">
                 <option value="">Elegí…</option>${TIPOS.map(t => `<option>${t}</option>`).join('')}</select></div>
@@ -125,7 +125,7 @@
             <div class="datos" id="n-resumen"></div>
             <div class="error-box oculto" id="n-error"></div>
             <button class="btn btn-primario btn-grande" id="n-guardar" style="margin-top:12px">Guardar OT</button>
-            <div class="nota" style="margin-top:8px">Obligatorio: cliente, dominio, tipo, KM y al menos un trabajo o repuesto.</div>
+            <div class="nota" style="margin-top:8px">Obligatorio: dominio, tipo, KM y al menos un trabajo o repuesto.</div>
           </section>
         </div>
       </div>`;
@@ -162,24 +162,25 @@
     };
     pintarTareas(); pintarReps();
 
-    $('n-cliente').addEventListener('change', async ev => {
-      const sel = $('n-unidad');
-      s.unidad = null; $('n-datos-unidad').innerHTML = '';
-      if (!ev.target.value) { sel.disabled = true; sel.innerHTML = '<option value="">Elegí primero el cliente</option>'; return; }
-      s.unidades = await Api.select('unidades', { select: 'id,dominio,interno,chasis,tipo,marca:marcas(nombre),modelo:modelos(nombre)',
-                                                  cliente_id: 'eq.' + ev.target.value, order: 'dominio' });
-      sel.disabled = false;
-      sel.innerHTML = `<option value="">${s.unidades.length ? 'Elegí el dominio…' : 'Este cliente no tiene unidades'}</option>` +
-        s.unidades.map(u => `<option value="${u.id}">${esc(u.dominio)}${u.interno ? ' · INT ' + esc(u.interno) : ''}</option>`).join('');
-    });
-    $('n-unidad').addEventListener('change', async ev => {
-      s.unidad = s.unidades.find(u => String(u.id) === ev.target.value) || null;
-      const u = s.unidad;
+    const elegirUnidad = async u => {
+      s.unidad = u;
+      $('n-unidad').value = u ? u.dominio : '';
+      if (u) $('n-cliente').value = String(u.cliente_id);
       $('n-datos-unidad').innerHTML = u ? `
+        <div class="dato"><div class="et">Cliente</div><div class="va">${esc(u.cliente ? u.cliente.nombre : '—')}</div></div>
         <div class="dato"><div class="et">INT</div><div class="va">${esc(u.interno || '—')}</div></div>
         <div class="dato"><div class="et">Chasis</div><div class="va">${esc(u.chasis || '—')}</div></div>
         <div class="dato"><div class="et">Marca y modelo</div><div class="va">${esc([u.marca && u.marca.nombre, u.modelo && u.modelo.nombre].filter(Boolean).join(' ') || '—')}</div></div>` : '';
       if (u && u.tipo && !s.tareas.some(t => t.tempario_id)) { $('n-tipo').value = u.tipo; s.tipo = u.tipo; await cargarTempario(); }
+    };
+    const bUnidad = autocompletarUnidad($('n-unidad'), {
+      clienteId: () => $('n-cliente').value,
+      alElegir: u => { elegirUnidad(u); $('n-km').focus(); },
+      alEscribir: () => { if (s.unidad) { s.unidad = null; $('n-datos-unidad').innerHTML = ''; } }
+    });
+    $('n-cliente').addEventListener('change', ev => {
+      bUnidad.olvidar();
+      if (s.unidad && String(s.unidad.cliente_id) !== ev.target.value) { elegirUnidad(null); }
     });
     $('n-tipo').addEventListener('change', async ev => {
       if (s.tareas.some(t => t.tempario_id) && ev.target.value !== s.tipo) {
@@ -226,8 +227,11 @@
     $('n-guardar').addEventListener('click', async ev => {
       const err = $('n-error');
       const falta = [];
-      if (!$('n-cliente').value) falta.push('cliente');
-      if (!s.unidad) falta.push('dominio');
+      if (!s.unidad && $('n-unidad').value.trim()) {
+        const u = await unidadExacta($('n-unidad').value, $('n-cliente').value).catch(() => null);
+        if (u) await elegirUnidad(u);
+      }
+      if (!s.unidad) falta.push('dominio (elegilo de la lista)');
       if (!$('n-tipo').value) falta.push('tipo de unidad');
       const km = parseInt(String($('n-km').value).replace(/\D/g, ''), 10);
       if (isNaN(km)) falta.push('KM');
@@ -335,8 +339,7 @@
     const s = filas[0];
     if (!s) { main.innerHTML = '<div class="tarjeta">No se encontró el pedido.</div>'; return; }
     const pendiente = s.estado === 'PENDIENTE';
-    const [unidades, stock] = await Promise.all([
-      pendiente && !s.unidad ? Api.select('unidades', { select: 'id,dominio,interno,tipo,cliente:clientes(nombre)', order: 'dominio' }) : Promise.resolve([]),
+    const [stock] = await Promise.all([
       s.repuestos.length ? Api.select('stock_disponible', { select: 'codigo,disponible',
         codigo: 'in.(' + s.repuestos.map(r => '"' + String(r.codigo).replace(/"/g, '') + '"').join(',') + ')' }) : Promise.resolve([])
     ]);
@@ -359,8 +362,9 @@
             <div class="dato"><div class="et">Dominio</div><div class="va">${esc(s.unidad.dominio)}</div></div>
             <div class="dato"><div class="et">INT</div><div class="va">${esc(s.unidad.interno || '—')}</div></div></div>`
           : `<div class="aviso-box">El mecánico escribió: <b>${esc(s.unidad_texto)}</b>. Elegí la unidad${pendiente ? '; si no está, cargala primero en <a href="#/clientes">Clientes y unidades</a>' : ''}.</div>
-            ${pendiente ? `<div class="campo"><label for="r-unidad" class="obligatorio">Unidad</label><select id="r-unidad">
-              <option value="">Elegí…</option>${unidades.map(u => `<option value="${u.id}">${esc(u.dominio)} · ${esc(u.cliente ? u.cliente.nombre : '')}${u.interno ? ' · INT ' + esc(u.interno) : ''}</option>`).join('')}</select></div>` : ''}`}
+            ${pendiente ? `<div class="campo"><label for="r-unidad" class="obligatorio">Unidad</label>
+              <input id="r-unidad" placeholder="Escribí dominio, INT o chasis"></div>
+              <div id="r-datos-unidad" class="datos" style="margin-bottom:12px"></div>` : ''}`}
         <div class="fila-campos">
           <div class="campo"><label for="r-tipo">Tipo de unidad</label><select id="r-tipo" ${dis}>${TIPOS.map(t => `<option ${t === s.tipo ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
           <div class="campo"><label for="r-km">KM</label><input id="r-km" inputmode="numeric" value="${esc(s.km)}" ${dis}></div>
@@ -393,6 +397,21 @@
 
     if (!pendiente) return;
     const err = document.getElementById('r-error');
+    let unidadElegida = null;
+    const mostrarUnidad = u => {
+      unidadElegida = u;
+      const caja = document.getElementById('r-datos-unidad');
+      if (caja) caja.innerHTML = u ? `
+        <div class="dato"><div class="et">Cliente</div><div class="va">${esc(u.cliente ? u.cliente.nombre : '—')}</div></div>
+        <div class="dato"><div class="et">INT</div><div class="va">${esc(u.interno || '—')}</div></div>
+        <div class="dato"><div class="et">Marca y modelo</div><div class="va">${esc([u.marca && u.marca.nombre, u.modelo && u.modelo.nombre].filter(Boolean).join(' ') || '—')}</div></div>` : '';
+    };
+    if (document.getElementById('r-unidad')) {
+      autocompletarUnidad(document.getElementById('r-unidad'), {
+        alElegir: u => { mostrarUnidad(u); if (u.tipo) document.getElementById('r-tipo').value = u.tipo; },
+        alEscribir: () => { if (unidadElegida) mostrarUnidad(null); }
+      });
+    }
     const mostrar = m => { err.textContent = m; err.classList.remove('oculto'); };
     on(main, 'click', '[data-accion=rechazar]', async () => {
       const v = await modal({ titulo: 'Rechazar pedido de OT', textoOk: 'Rechazar', peligro: true,
@@ -403,8 +422,12 @@
     });
     on(main, 'click', '[data-accion=aceptar]', async (ev, b) => {
       err.classList.add('oculto');
-      const unidadSel = document.getElementById('r-unidad');
-      if (unidadSel && !unidadSel.value) return mostrar('Elegí la unidad.');
+      const unidadInp = document.getElementById('r-unidad');
+      if (unidadInp && !unidadElegida && unidadInp.value.trim()) {
+        const u = await unidadExacta(unidadInp.value).catch(() => null);
+        if (u) mostrarUnidad(u);
+      }
+      if (unidadInp && !unidadElegida) return mostrar('Elegí la unidad de la lista.');
       const km = parseInt(String(document.getElementById('r-km').value).replace(/\D/g, ''), 10);
       if (isNaN(km)) return mostrar('El KM no es válido.');
       const tareas = [];
@@ -428,7 +451,7 @@
       b.disabled = true;
       try {
         const otId = await Api.rpc('aprobar_solicitud_ot', {
-          p_id: s.id, p_unidad_id: unidadSel ? Number(unidadSel.value) : null, p_km: km,
+          p_id: s.id, p_unidad_id: unidadInp ? unidadElegida.id : null, p_km: km,
           p_tipo: document.getElementById('r-tipo').value, p_tareas: tareas, p_repuestos: repuestos,
           p_observaciones: document.getElementById('r-obs').value.trim() || null });
         toast('OT creada. Asigná las tareas a los mecánicos.');
@@ -555,10 +578,14 @@
               <div class="dato"><div class="et">INT</div><div class="va">${esc(u.interno || '—')}</div></div>
               <div class="dato"><div class="et">Chasis</div><div class="va">${esc(u.chasis || '—')}</div></div>
               <div class="dato"><div class="et">Marca y modelo</div><div class="va">${esc([u.marca && u.marca.nombre, u.modelo && u.modelo.nombre].filter(Boolean).join(' ') || '—')}</div></div>
-              <div class="dato"><div class="et">Ingreso</div><div class="va">${fecha(ot.fecha_ingreso)}${ot.hora_ingreso ? ' ' + esc(ot.hora_ingreso.slice(0, 5)) : ''}</div></div>
+              ${puede && esAdmin() ? '' : `<div class="dato"><div class="et">Ingreso</div><div class="va">${fecha(ot.fecha_ingreso)}${ot.hora_ingreso ? ' ' + esc(ot.hora_ingreso.slice(0, 5)) : ''}</div></div>`}
               ${ot.solicitante ? `<div class="dato"><div class="et">Pedida por</div><div class="va">${esc(ot.solicitante.nombre)}</div></div>` : ''}
             </div>
             <form id="f-datos">
+              ${puede && esAdmin() ? `<div class="fila-campos">
+                <div class="campo"><label for="o-fing" class="obligatorio">Fecha de ingreso</label><input id="o-fing" type="date" value="${esc(ot.fecha_ingreso || '')}" max="${hoyISO()}"></div>
+                <div class="campo"><label for="o-hing">Hora de ingreso</label><input id="o-hing" type="time" value="${esc((ot.hora_ingreso || '').slice(0, 5))}"></div>
+              </div>` : ''}
               <div class="fila-campos">
                 <div class="campo"><label for="o-km">KM</label><input id="o-km" inputmode="numeric" value="${esc(ot.km)}" ${puede ? '' : 'disabled'}></div>
                 <div class="campo"><label for="o-fac">N° factura</label><input id="o-fac" value="${esc(ot.nro_factura || '')}" ${puede ? '' : 'disabled'}></div>
@@ -611,10 +638,17 @@
       const km = parseInt(String(document.getElementById('o-km').value).replace(/\D/g, ''), 10);
       if (isNaN(km)) return toast('El KM no es válido', 'error');
       const v = x => document.getElementById(x).value.trim() || null;
+      const cambios = { km, nro_factura: v('o-fac'), fecha_salida: v('o-fsal'), hora_salida: v('o-hsal'),
+                        presupuesto: v('o-pres'), ot_cliente: v('o-otc'), observaciones: v('o-obs') };
+      if (document.getElementById('o-fing')) {
+        const fi = v('o-fing');
+        if (!fi) return toast('La fecha de ingreso no puede quedar vacía', 'error');
+        if (fi > hoyISO()) return toast('La fecha de ingreso no puede ser posterior a hoy', 'error');
+        if (cambios.fecha_salida && cambios.fecha_salida < fi) return toast('La fecha de salida no puede ser anterior a la de ingreso', 'error');
+        cambios.fecha_ingreso = fi; cambios.hora_ingreso = v('o-hing');
+      }
       try {
-        await Api.update('ordenes_trabajo', { id: 'eq.' + id }, {
-          km, nro_factura: v('o-fac'), fecha_salida: v('o-fsal'), hora_salida: v('o-hsal'),
-          presupuesto: v('o-pres'), ot_cliente: v('o-otc'), observaciones: v('o-obs') });
+        await Api.update('ordenes_trabajo', { id: 'eq.' + id }, cambios);
         toast('Datos guardados'); recargar();
       } catch (e) { toast(errMsg(e), 'error'); }
     });
