@@ -101,7 +101,7 @@ begin
     raise exception 'Solo Depósito o Administrador marcan la entrega de repuestos';
   end if;
   create temp table if not exists _entregados (id bigint, ot_id bigint, cargado_por uuid, codigo text, cantidad numeric) on commit drop;
-  delete from _entregados;
+  truncate _entregados;  -- (Supabase no permite DELETE sin WHERE)
   with x as (
     update public.repuestos_ot
        set estado = 'ENTREGADO', entregado_por = auth.uid(), entregado_en = now()
