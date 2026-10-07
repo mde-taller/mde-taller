@@ -3,7 +3,7 @@
   const { st, cfg, esc, num, parseNum, nroOT, fecha, fechaHora, hoyISO, horaActual, esAdmin, esOficina,
           chipEstadoOT, chipEstadoTarea, errMsg, toast, modal, confirmar, ICONOS, ESTADOS_OT, TIPOS,
           textoMotivo, pausaAbierta, chipPausa, autocompletarRepuesto, autocompletarUnidad, unidadExacta,
-          decidirFaltante, pedirADeposito, esFaltaDeStock, ruta, ir, on, navegar } = App;
+          decidirFaltante, pedirADeposito, esFaltaDeStock, esTareaButaca, resumenButacas, ruta, ir, on, navegar } = App;
 
   const cacheTempario = {};
   async function tempario(tipo) {
@@ -502,6 +502,8 @@
       Api.select('repuestos_ot', { select: 'id,codigo,cantidad,tarea_id,cargado_en,estado,entregado_en,repuesto:repuestos(descripcion),cargador:usuarios!repuestos_ot_cargado_por_fkey(nombre),entregador:usuarios!repuestos_ot_entregado_por_fkey(nombre)',
                                    ot_id: 'eq.' + id, order: 'id' })
     ]);
+    const butacas = tareas.length ? await Api.select('butacas_tarea', { select: 'tarea_id,butaca,trabajos', tarea_id: 'in.(' + tareas.map(t => t.id).join(',') + ')' }) : [];
+    for (const t of tareas) t.butacas = butacas.filter(b => b.tarea_id === t.id);
     return { ot: ots[0], tareas, reps };
   }
 
@@ -556,7 +558,9 @@
               const asig = t.asignaciones || [];
               const libres = mecs.filter(m => !asig.some(a => a.mecanico_id === m.id));
               return `<tr><td>${t.renglon}</td>
-                <td>${esc(t.descripcion)}${t.tempario && t.tempario.categoria ? `<div class="nota">${esc(t.tempario.categoria.nombre)}</div>` : '<div class="nota">A mano</div>'}</td>
+                <td>${esc(t.descripcion)}${t.tempario && t.tempario.categoria ? `<div class="nota">${esc(t.tempario.categoria.nombre)}</div>` : '<div class="nota">A mano</div>'}
+                  ${t.butacas.length ? `<div class="nota">Butacas: ${esc(resumenButacas(t.butacas))}</div>` : ''}
+                  ${puede && (t.butacas.length || esTareaButaca(t.descripcion)) && !['CERRADA', 'PRUEBA'].includes(ot.estado) ? `<a href="#/butacas/${t.id}" class="nota">${t.butacas.length ? 'Cambiar butacas' : 'Marcar butacas en el plano'}</a>` : ''}</td>
                 <td class="num">${num(t.cantidad)}</td><td class="num">${num(t.horas)}</td><td class="num"><b>${num(t.horas_total)}</b></td>
                 <td>${asig.map(a => `<span class="chip" style="margin:2px">${esc(a.usuario ? a.usuario.nombre : '')}${a.terminada_en ? ' ✓' : ''}${puede ? `<button class="chip-x" data-desasignar="${t.id}" data-mec="${a.mecanico_id}" aria-label="Quitar a ${esc(a.usuario ? a.usuario.nombre : '')}">×</button>` : ''}</span>`).join('')}
                   ${puede && asig.length < 2 && libres.length ? `<select data-asignar="${t.id}" aria-label="Asignar mecánico" style="width:auto;min-height:36px;margin-top:4px">
@@ -818,7 +822,7 @@
           <td>${esc(u.dominio)}</td><td>${esc(u.interno || '')}</td><td>${esc(u.chasis || '')}</td><td>${num(ot.km, 0)}</td><td>${esc(ot.tipo)}</td></tr></table>
         <div class="seccion">TRABAJO Y SERVICIO</div>
         <table><tr><th style="width:6%">#</th><th>Descripción</th><th style="width:10%">CANT.</th><th style="width:12%">HS</th></tr>
-          ${tareas.map(t => `<tr><td>${t.renglon}</td><td>${esc(t.descripcion)}</td><td style="text-align:right">${num(t.cantidad)}</td><td style="text-align:right">${num(t.horas_total)}</td></tr>`).join('') || '<tr><td colspan="4">—</td></tr>'}
+          ${tareas.map(t => `<tr><td>${t.renglon}</td><td>${esc(t.descripcion)}${t.butacas.length ? `<div style="font-size:.85em">Butacas: ${esc(resumenButacas(t.butacas))}</div>` : ''}</td><td style="text-align:right">${num(t.cantidad)}</td><td style="text-align:right">${num(t.horas_total)}</td></tr>`).join('') || '<tr><td colspan="4">—</td></tr>'}
           <tr><th colspan="3" style="text-align:right">TOTAL HS</th><th style="text-align:right">${num(total)}</th></tr></table>
         <div class="seccion">REPUESTOS</div>
         <table><tr><th style="width:24%">Código</th><th>Repuesto</th><th style="width:12%">Cantidad</th></tr>

@@ -286,3 +286,24 @@ tr.bien td { background: #F1F9F3; }
   .hoja { box-shadow: none; margin: 0; height: 296.5mm; page-break-after: avoid; break-after: avoid; }
   * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }
+
+/* ---------- Plano de butacas ---------- */
+.plano-caja { background: var(--blanco); border: 1px solid var(--linea); border-radius: var(--radio); padding: 12px; }
+.plano-butacas { display: block; width: 100%; max-width: 360px; height: auto; margin: 0 auto; font-family: var(--texto); }
+.plano-butacas .carroceria { fill: #FAFAF8; stroke: var(--tinta); stroke-width: 2; }
+.plano-butacas .parabrisas { fill: var(--chip); stroke: var(--gris); }
+.plano-butacas .volante { fill: none; stroke: var(--tinta); stroke-width: 3; }
+.plano-butacas .puerta { stroke: var(--naranja); stroke-width: 5; stroke-dasharray: 6 4; }
+.plano-butacas .rotulo { font-size: 11px; font-weight: 600; fill: var(--gris); letter-spacing: .05em; }
+.plano-butacas .asiento { fill: var(--chip); stroke: var(--tinta); stroke-width: 1.5; }
+.plano-butacas .respaldo { fill: #C9C4BA; }
+.plano-butacas text { font-size: 16px; font-weight: 700; fill: var(--tinta); pointer-events: none; }
+.plano-butacas .butaca[role="button"] { cursor: pointer; }
+.plano-butacas .butaca[role="button"]:hover .asiento { stroke: var(--naranja); stroke-width: 2.5; }
+.plano-butacas .butaca:focus { outline: none; }
+.plano-butacas .butaca:focus-visible .asiento { stroke: var(--azul); stroke-width: 3; }
+.plano-butacas .butaca.sel .asiento { fill: var(--naranja); stroke: var(--naranja-osc); }
+.plano-butacas .butaca.sel .respaldo { fill: var(--naranja-osc); }
+.plano-butacas .butaca.sel text { fill: #fff; }
+.plano-butacas .insignia { fill: var(--tinta); stroke: #fff; stroke-width: 2; }
+.plano-butacas .insignia-n { font-size: 11px; fill: #fff; }

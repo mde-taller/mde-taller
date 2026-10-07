@@ -2,7 +2,8 @@
 (() => {
   const { st, esc, num, parseNum, nroOT, fechaHora, duracion, chipEstadoTarea, errMsg, toast, modal, confirmar,
           ICONOS, MOTIVOS, textoMotivo, pausaAbierta, chipPausa, autocompletarRepuesto, autocompletarUnidad, unidadExacta,
-          decidirFaltante, pedirADeposito, esFaltaDeStock, TIPOS, ruta, ir, on, navegar } = App;
+          decidirFaltante, pedirADeposito, esFaltaDeStock, esTareaButaca, nombreButaca, ordenButaca, textoTrabajos,
+          TIPOS, ruta, ir, on, navegar } = App;
 
   let pestana = 'pendientes';
   const hora = d => d ? new Date(d).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
@@ -59,7 +60,7 @@
 
   // ---------------- Detalle de tarea ----------------
   ruta(/^#\/tarea\/(\d+)$/, async (main, id) => {
-    const [tareas, registros, repuestos, pedidosTarea] = await Promise.all([
+    const [tareas, registros, repuestos, pedidosTarea, butacas] = await Promise.all([
       Api.select('tareas_ot', {
         select: 'id,descripcion,horas,cantidad,horas_total,estado,ot_id,tempario(categoria:categorias_tempario(nombre)),' +
                 'ot:ordenes_trabajo(id,numero,estado,tipo,km,observaciones,unidad:unidades(dominio,interno,chasis,marca:marcas(nombre),modelo:modelos(nombre)),cliente:clientes(nombre),' +
@@ -69,7 +70,8 @@
       }),
       Api.select('registros_tiempo', { select: 'inicio,fin', tarea_id: 'eq.' + id, mecanico_id: 'eq.' + st.usuarioId, order: 'inicio' }),
       Api.select('repuestos_ot', { select: 'id,codigo,cantidad,cargado_en,estado,repuesto:repuestos(descripcion)', tarea_id: 'eq.' + id, order: 'id' }),
-      Api.select('pedidos_repuesto', { select: 'id,descripcion,codigo,cantidad,estado,nota,creado_en', tarea_id: 'eq.' + id, pausa_id: 'is.null', order: 'id' })
+      Api.select('pedidos_repuesto', { select: 'id,descripcion,codigo,cantidad,estado,nota,creado_en', tarea_id: 'eq.' + id, pausa_id: 'is.null', order: 'id' }),
+      Api.select('butacas_tarea', { select: 'butaca,trabajos', tarea_id: 'eq.' + id })
     ]);
     const t = tareas[0];
     if (!t) { main.innerHTML = '<div class="tarjeta">No se encontró la tarea o no está asignada a vos.</div>'; return; }
@@ -129,6 +131,13 @@
         <div class="reloj" id="reloj">${duracion(acumulado())}</div>
         ${botones}
       </section>
+      ${esTareaButaca(t.descripcion) || butacas.length ? `<section class="tarjeta">
+        <h3>Butacas${butacas.length ? ` (${butacas.length})` : ''}</h3>
+        ${butacas.length ? butacas.slice().sort((a, b) => ordenButaca(a.butaca) - ordenButaca(b.butaca)).map(b => `<div class="repuesto-fila"><div class="info">
+            <div class="desc">${esc(nombreButaca(b.butaca))}</div><div class="cod">${esc(textoTrabajos(b.trabajos))}</div></div></div>`).join('')
+          : '<div class="vacio">Todavía no marcaste butacas.</div>'}
+        ${editable ? `<a class="btn btn-primario btn-grande" style="margin-top:8px" href="#/butacas/${t.id}">Marcar butacas en el plano</a>` : ''}
+      </section>` : ''}
       <section class="tarjeta">
         <h3>Repuestos cargados</h3>
         ${repuestos.length ? repuestos.map(r => `

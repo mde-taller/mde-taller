@@ -173,6 +173,17 @@ window.App = (() => {
     Api.rpc('pedir_repuesto', { p_ot_id: Number(otId), p_codigo: codigo, p_cantidad: cantidad, p_tarea_id: tareaId ? Number(tareaId) : null, p_detalle: nota || null });
   const esFaltaDeStock = e => /stock insuficiente/i.test((e && e.message) || '');
 
+  // ---------------- Butacas (minibús 19+1) ----------------
+  const TRABAJOS_BUTACA = [['REEMPLAZO', 'Reemplazo de butaca'], ['REPARACION', 'Reparación'], ['CAMBIO DE REPUESTO', 'Cambio de repuesto'],
+                           ['COLOCACION DE CINTO', 'Colocación de cinto'], ['REEMPLAZO DE CINTO', 'Reemplazo de cinto']];
+  const esTareaButaca = desc => /butac|asiento/i.test(desc || '');
+  const ordenButaca = b => (b === 'COND' ? 0 : Number(b));
+  const nombreButaca = b => (b === 'COND' ? 'Conductor' : 'Butaca ' + b);
+  const posTrabajo = v => { const i = TRABAJOS_BUTACA.findIndex(t => t[0] === v); return i < 0 ? 99 : i; };
+  const textoTrabajos = lista => (lista || []).slice().sort((a, b) => posTrabajo(a) - posTrabajo(b)).map(v => { const x = TRABAJOS_BUTACA.find(t => t[0] === v); return x ? x[1].toLowerCase() : v.toLowerCase(); }).join(', ');
+  const resumenButacas = lista => (lista || []).slice().sort((a, b) => ordenButaca(a.butaca) - ordenButaca(b.butaca))
+    .map(b => `${b.butaca === 'COND' ? 'Cond.' : b.butaca}: ${textoTrabajos(b.trabajos)}`).join(' · ');
+
   // ---------------- Buscadores desplegables (repuestos y unidades) ----------------
   // Mientras se escribe, muestran lo que coincide. alElegir(item) recibe el elegido.
   let acContador = 0;
@@ -581,6 +592,7 @@ window.App = (() => {
     veTodas, limpiarCodigo, chipEstadoOT, chipEstadoTarea, errMsg, toast, modal, confirmar, ICONOS, ESTADOS_OT,
     TIPOS, ROLES, MOTIVOS, textoMotivo, pausaAbierta, chipPausa, autocompletarRepuesto,
     autocompletarUnidad, unidadExacta, decidirFaltante, pedirADeposito, esFaltaDeStock,
+    TRABAJOS_BUTACA, esTareaButaca, ordenButaca, nombreButaca, textoTrabajos, resumenButacas,
     ruta, ir, on, navegar, actualizarAvisos, arrancar
   };
 })();
