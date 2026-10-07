@@ -351,6 +351,7 @@ window.App = (() => {
     solicitudes: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 4h8l4 4v12H4V4h4M8 4v4h8M8 13h8M8 17h5"/></svg>',
     pausa: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5v14M15 5v14"/></svg>',
     atras: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>',
+    taller: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>',
     lapiz: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h4L19 9l-4-4L4 16v4z"/></svg>'
   };
 
@@ -359,6 +360,7 @@ window.App = (() => {
     if (tiene('MECANICO')) {
       items.push(['grupo', 'Mecánico']);
       items.push(['#/tareas', 'Mis tareas']);
+      items.push(['#/taller', 'OT del taller']);
       items.push(['#/pedir-ot', 'Pedir OT nueva']);
       items.push(['#/mis-solicitudes', 'Mis solicitudes']);
     }
@@ -403,6 +405,7 @@ window.App = (() => {
       </div>
       <nav class="inferior" aria-label="Accesos rápidos">
         <a href="#/tareas">${ICONOS.lista}Tareas</a>
+        <a href="#/taller">${ICONOS.taller}OT</a>
         <a href="#/pedir-ot">${ICONOS.pedido}Pedir OT</a>
         <a href="#/mis-solicitudes">${ICONOS.solicitudes}Solicitudes</a>
         <a href="#/avisos">${ICONOS.campana}Avisos<span class="badge oculto" id="badge-inf"></span></a>

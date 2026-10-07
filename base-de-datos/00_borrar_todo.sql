@@ -14,7 +14,7 @@ drop view if exists public.horas_reales;
 drop view if exists public.stock_disponible;
 
 drop table if exists
-  public.butacas_tarea, public.pedidos_repuesto, public.pausas_ot, public.solicitudes_de_ot,
+  public.pedidos_tarea, public.butacas_tarea, public.pedidos_repuesto, public.pausas_ot, public.solicitudes_de_ot,
   public.avisos, public.solicitudes, public.registros_tiempo, public.movimientos_stock,
   public.repuestos_ot, public.asignaciones, public.tareas_ot, public.ordenes_trabajo,
   public.repuestos, public.tempario, public.categorias_tempario, public.unidades,
@@ -38,7 +38,8 @@ begin
         'tiene_rol','ve_todas_las_ot','tiene_algun_rol','texto_motivo','pausar_ot','reanudar_ot',
         'resolver_pedido_repuesto','avisar_solicitud_ot','aprobar_solicitud_ot','rechazar_solicitud_ot',
         'buscar_repuestos','avisar_repuesto_pendiente','entregar_repuestos','pedir_repuesto',
-        'guardar_butacas','texto_trabajos_butaca')
+        'guardar_butacas','texto_trabajos_butaca','ot_taller_json','ots_taller','ot_taller','pedir_tarea',
+        'resolver_pedido_tarea','aprobar_pedido_al_asignar')
   loop
     execute format('drop function if exists %s cascade', f.firma);
   end loop;

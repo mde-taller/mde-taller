@@ -309,18 +309,46 @@
                          'unidad:unidades(id,dominio,interno,cliente:clientes(nombre)),ot:ordenes_trabajo(id,numero),' +
                          'mecanico:usuarios!solicitudes_de_ot_mecanico_id_fkey(id,nombre)';
 
+  // Pedido de un mecánico para hacer una tarea sin asignar: aprobar (queda asignada) o rechazar con motivo.
+  async function resolverPedidoTarea(id, aprobar, quien, que) {
+    let motivo = null;
+    if (!aprobar) {
+      const v = await modal({ titulo: 'Rechazar pedido de tarea', textoOk: 'Rechazar', peligro: true,
+        html: `<p><b>${esc(quien)}</b> pidió hacer "${esc(que)}".</p>`,
+        campos: [{ id: 'motivo', label: 'Motivo (le llega al mecánico)', tipo: 'textarea', obligatorio: true }] });
+      if (!v) return false;
+      motivo = v.motivo.trim();
+    }
+    try {
+      await Api.rpc('resolver_pedido_tarea', { p_id: Number(id), p_aprobar: aprobar, p_motivo: motivo });
+      toast(aprobar ? `Tarea asignada a ${quien}` : 'Pedido rechazado');
+      return true;
+    } catch (e) { toast(errMsg(e), 'error'); return false; }
+  }
+  const selPedidoTarea = 'id,descripcion,ot_id,ot_numero,dominio,creado_en,mecanico:usuarios!pedidos_tarea_mecanico_id_fkey(nombre)';
+
   ruta(/^#\/solicitudes$/, async main => {
-    const [pend, resueltas, mecs, pedidosOT] = await Promise.all([
+    const [pend, resueltas, mecs, pedidosOT, pedTareas] = await Promise.all([
       Api.select('solicitudes', { select: selSolicitud, estado: 'eq.PENDIENTE', order: 'creado_en' }),
       Api.select('solicitudes', { select: selSolicitud, estado: 'neq.PENDIENTE', order: 'resuelta_en.desc', limit: 30 }),
       mecanicos(),
-      esAdmin() ? Api.select('solicitudes_de_ot', { select: selSolicitudOT, order: 'creado_en.desc', limit: 30 }) : Promise.resolve([])
+      esAdmin() ? Api.select('solicitudes_de_ot', { select: selSolicitudOT, order: 'creado_en.desc', limit: 30 }) : Promise.resolve([]),
+      Api.select('pedidos_tarea', { select: selPedidoTarea, estado: 'eq.PENDIENTE', order: 'creado_en' })
     ]);
     const otPend = pedidosOT.filter(s => s.estado === 'PENDIENTE');
     const otResueltas = pedidosOT.filter(s => s.estado !== 'PENDIENTE').slice(0, 10);
     main.innerHTML = `
       <div class="encabezado"><div><h1>Solicitudes</h1>
-        <div class="sub">${esAdmin() ? `${otPend.length} pedidos de OT y ` : ''}${pend.length} tareas pendientes</div></div></div>
+        <div class="sub">${esAdmin() ? `${otPend.length} pedidos de OT, ` : ''}${pedTareas.length} pedidos de tarea y ${pend.length} tareas nuevas pendientes</div></div></div>
+      <h2 style="margin:0 0 10px">Mecánicos que piden una tarea</h2>
+      <div class="lista-tareas" style="margin-bottom:20px">${pedTareas.length ? pedTareas.map(p => `
+        <div class="tarea-card">
+          <div class="linea1"><span><a href="#/ot/${p.ot_id}">${esc(nroOT(p.ot_numero))}</a> · ${esc(p.dominio || '')} · ${fechaHora(p.creado_en)}</span><span class="chip ambar">Para revisar</span></div>
+          <div class="titulo">${esc(p.descripcion)}</div>
+          <div class="linea3">La pide <b>${esc(p.mecanico ? p.mecanico.nombre : '')}</b>. Si la aprobás, queda asignada a él.</div>
+          <div class="acciones" style="margin-top:6px"><button class="btn btn-verde" data-asignar-pt="${p.id}">Aprobar y asignar</button>
+            <button class="btn btn-peligro" data-rechazar-pt="${p.id}">Rechazar</button></div>
+        </div>`).join('') : '<div class="tarjeta vacio">No hay pedidos de tareas.</div>'}</div>
       ${esAdmin() ? `<h2 style="margin:0 0 10px">Pedidos de OT nueva</h2>
         <div class="lista-tareas" style="margin-bottom:20px">${otPend.length ? otPend.map(s => `
           <a class="tarea-card" href="#/solicitud-ot/${s.id}">
@@ -349,6 +377,15 @@
         ${!resueltas.length && !otResueltas.length ? '<tr><td colspan="4" class="vacio">Sin solicitudes resueltas.</td></tr>' : ''}</tbody></table></div>`;
     on(main, 'click', '[data-aprobar]', async (ev, b) => { if (await aprobar(pend[Number(b.dataset.aprobar)], mecs)) navegar(); });
     on(main, 'click', '[data-rechazar]', async (ev, b) => { if (await rechazar(pend[Number(b.dataset.rechazar)])) navegar(); });
+    const pt = id => pedTareas.find(x => String(x.id) === id) || {};
+    on(main, 'click', '[data-asignar-pt]', async (ev, b) => {
+      const p = pt(b.dataset.asignarPt);
+      if (await resolverPedidoTarea(p.id, true, p.mecanico ? p.mecanico.nombre : '', p.descripcion)) navegar();
+    });
+    on(main, 'click', '[data-rechazar-pt]', async (ev, b) => {
+      const p = pt(b.dataset.rechazarPt);
+      if (await resolverPedidoTarea(p.id, false, p.mecanico ? p.mecanico.nombre : '', p.descripcion)) navegar();
+    });
   }, ['OFICINA', 'ADMINISTRADOR']);
 
   // ---------------- Revisar un pedido de OT del mecánico (Administrador) ----------------
@@ -511,11 +548,12 @@
     const { ot, tareas, reps } = await cargarOT(id);
     if (!ot) { main.innerHTML = '<div class="tarjeta">No se encontró la OT.</div>'; return; }
     const puede = esOficina();
-    const [mecs, sols, reales, pedidos] = await Promise.all([
+    const [mecs, sols, reales, pedidos, pedTareas] = await Promise.all([
       puede ? mecanicos() : Promise.resolve([]),
       puede ? Api.select('solicitudes', { select: selSolicitud, ot_id: 'eq.' + id, estado: 'eq.PENDIENTE', order: 'creado_en' }) : Promise.resolve([]),
       esAdmin() ? Api.select('horas_reales', { select: 'tarea_id,mecanico,horas_reales,en_curso', ot_id: 'eq.' + id }) : Promise.resolve([]),
-      Api.select('pedidos_repuesto', { select: 'id,descripcion,codigo,cantidad,estado,nota,detalle,creado_en,pedidor:usuarios!pedidos_repuesto_pedido_por_fkey(nombre)', ot_id: 'eq.' + id, order: 'creado_en.desc' })
+      Api.select('pedidos_repuesto', { select: 'id,descripcion,codigo,cantidad,estado,nota,detalle,creado_en,pedidor:usuarios!pedidos_repuesto_pedido_por_fkey(nombre)', ot_id: 'eq.' + id, order: 'creado_en.desc' }),
+      puede ? Api.select('pedidos_tarea', { select: 'id,tarea_id,descripcion,mecanico:usuarios!pedidos_tarea_mecanico_id_fkey(nombre)', ot_id: 'eq.' + id, estado: 'eq.PENDIENTE', order: 'creado_en' }) : Promise.resolve([])
     ]);
     const u = ot.unidad || {};
     const entrega = App.tiene('DEPOSITO') || esAdmin();
@@ -565,7 +603,9 @@
                 <td>${asig.map(a => `<span class="chip" style="margin:2px">${esc(a.usuario ? a.usuario.nombre : '')}${a.terminada_en ? ' ✓' : ''}${puede ? `<button class="chip-x" data-desasignar="${t.id}" data-mec="${a.mecanico_id}" aria-label="Quitar a ${esc(a.usuario ? a.usuario.nombre : '')}">×</button>` : ''}</span>`).join('')}
                   ${puede && asig.length < 2 && libres.length ? `<select data-asignar="${t.id}" aria-label="Asignar mecánico" style="width:auto;min-height:36px;margin-top:4px">
                     <option value="">${asig.length ? '+ segundo mecánico' : 'Asignar…'}</option>${libres.map(m => `<option value="${m.id}">${esc(m.nombre)}</option>`).join('')}</select>` : ''}
-                  ${!asig.length && !puede ? '<span class="nota">Sin asignar</span>' : ''}</td>
+                  ${!asig.length && !puede ? '<span class="nota">Sin asignar</span>' : ''}
+                  ${pedTareas.filter(p => p.tarea_id === t.id).map(p => `<div class="nota" style="margin-top:4px">Pide hacerla: <b>${esc(p.mecanico ? p.mecanico.nombre : '')}</b>
+                    <button class="btn-texto" data-asignar-pt="${p.id}">Asignar</button> <button class="btn-texto" data-rechazar-pt="${p.id}">Rechazar</button></div>`).join('')}</td>
                 <td>${chipEstadoTarea(t.estado)}</td>
                 ${esAdmin() ? `<td>${(realesPorTarea[t.id] || []).map(r => `<div class="nota">${esc(r.mecanico)}: ${num(r.horas_reales)} h${r.en_curso ? ' (en curso)' : ''}</div>`).join('') || '<span class="nota">—</span>'}</td>` : ''}
                 ${puede ? `<td style="white-space:nowrap"><button class="btn-texto" data-editar-tarea="${t.id}">Editar</button><button class="btn-texto" data-quitar-tarea="${t.id}">Quitar</button></td>` : ''}</tr>`;
@@ -685,6 +725,11 @@
         await Api.update('ordenes_trabajo', { id: 'eq.' + id }, cambios);
         toast('Datos guardados'); recargar();
       } catch (e) { toast(errMsg(e), 'error'); }
+    });
+    on(main, 'click', '[data-asignar-pt], [data-rechazar-pt]', async (ev, b) => {
+      const aprobar = 'asignarPt' in b.dataset;
+      const p = pedTareas.find(x => String(x.id) === (aprobar ? b.dataset.asignarPt : b.dataset.rechazarPt)) || {};
+      if (await resolverPedidoTarea(p.id, aprobar, p.mecanico ? p.mecanico.nombre : '', p.descripcion)) recargar();
     });
     on(main, 'change', '[data-asignar]', async (ev, sel) => {
       if (!sel.value) return;

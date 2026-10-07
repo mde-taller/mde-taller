@@ -1,6 +1,6 @@
 // MDE · Taller — pantallas del mecánico (celular).
 (() => {
-  const { st, esc, num, parseNum, nroOT, fechaHora, duracion, chipEstadoTarea, errMsg, toast, modal, confirmar,
+  const { st, esc, num, parseNum, nroOT, fecha, fechaHora, duracion, chipEstadoOT, chipEstadoTarea, errMsg, toast, modal, confirmar,
           ICONOS, MOTIVOS, textoMotivo, pausaAbierta, chipPausa, autocompletarRepuesto, autocompletarUnidad, unidadExacta,
           decidirFaltante, pedirADeposito, esFaltaDeStock, esTareaButaca, nombreButaca, ordenButaca, textoTrabajos,
           TIPOS, ruta, ir, on, navegar } = App;
@@ -56,6 +56,76 @@
         }).join('') : `<div class="tarjeta vacio">${pestana === 'pendientes' ? 'No tenés tareas pendientes.' : pestana === 'curso' ? 'No tenés tareas en curso.' : 'Todavía no terminaste tareas.'}</div>`}
       </div>`;
     on(main, 'click', '[data-p]', (ev, b) => { pestana = b.dataset.p; navegar(); });
+  }, ['MECANICO']);
+
+  // ---------------- OT del taller: todas las OT por estado (solo consulta) ----------------
+  let estadoTaller = 'ABIERTA', buscarTaller = '';
+  const ESTADOS_TALLER = [['ABIERTA', 'Abiertas'], ['EN DIAGNÓSTICO', 'En diagnóstico'], ['EN REPARACIÓN', 'En reparación'],
+                          ['ESPERANDO REPUESTOS', 'Esperando repuestos'], ['FINALIZADA', 'Finalizadas'], ['CERRADA', 'Cerradas'], ['PRUEBA', 'Prueba']];
+  ruta(/^#\/taller$/, async main => {
+    const r = await Api.rpc('ots_taller', { p_estado: estadoTaller });
+    const conteos = (r && r.conteos) || {};
+    const ots = (r && r.ots) || [];
+    main.innerHTML = `
+      <div class="encabezado"><div><h1>OT del taller</h1><div class="sub">Todas las órdenes. Si una tarea no tiene mecánico, podés pedirla.</div></div></div>
+      <div class="pestanas desplazable" role="tablist">${ESTADOS_TALLER.filter(([e]) => e !== 'PRUEBA' || conteos[e]).map(([e, l]) =>
+        `<button class="pestana ${e === estadoTaller ? 'activa' : ''}" data-e="${esc(e)}" role="tab" aria-selected="${e === estadoTaller}">${l} (${conteos[e] || 0})</button>`).join('')}</div>
+      <input id="t-buscar" type="search" placeholder="Buscar por N° de OT, dominio, INT o cliente" value="${esc(buscarTaller)}" style="margin-bottom:12px">
+      <div class="lista-tareas" id="t-lista"></div>`;
+    const pintar = () => {
+      const q = buscarTaller.trim().toUpperCase();
+      const lista = ots.filter(o => !q || [nroOT(o.numero), String(o.numero), o.dominio, o.interno, o.cliente]
+        .some(v => String(v || '').toUpperCase().includes(q)));
+      document.getElementById('t-lista').innerHTML = lista.length ? lista.map(o => {
+        const tareas = o.tareas || [];
+        const libres = tareas.filter(t => !t.asignados.length && t.estado !== 'HECHA').length;
+        const mias = tareas.filter(t => t.mia).length;
+        const hechas = tareas.filter(t => t.estado === 'HECHA').length;
+        return `<a class="tarea-card" href="#/taller/${o.id}">
+          <div class="linea1"><span>${esc(nroOT(o.numero))} · ${esc(o.dominio || '')}${o.interno ? ' · INT ' + esc(o.interno) : ''}</span>${o.pausa ? chipPausa({ motivo: o.pausa }) : ''}</div>
+          <div class="titulo">${esc(o.cliente || '')}</div>
+          <div class="linea3">${esc(o.tipo)} · ${tareas.length} tarea${tareas.length === 1 ? '' : 's'}, ${hechas} hecha${hechas === 1 ? '' : 's'}${libres ? ` · <b style="color:var(--naranja)">${libres} sin asignar</b>` : ''}${mias ? ` · ${mias} tuya${mias === 1 ? '' : 's'}` : ''}</div>
+        </a>`;
+      }).join('') : `<div class="tarjeta vacio">${q ? 'No hay OT que coincidan con la búsqueda.' : 'No hay OT en este estado.'}</div>`;
+    };
+    pintar();
+    on(main, 'click', '[data-e]', (ev, b) => { estadoTaller = b.dataset.e; navegar(); });
+    document.getElementById('t-buscar').addEventListener('input', ev => { buscarTaller = ev.target.value; pintar(); });
+  }, ['MECANICO']);
+
+  ruta(/^#\/taller\/(\d+)$/, async (main, id) => {
+    const o = await Api.rpc('ot_taller', { p_ot_id: Number(id) });
+    if (!o) { main.innerHTML = '<div class="tarjeta">No se encontró la OT.</div>'; return; }
+    const activa = !['FINALIZADA', 'CERRADA', 'PRUEBA'].includes(o.estado);
+    main.innerHTML = `
+      <a class="volver" href="#/taller">${ICONOS.atras} OT del taller</a>
+      <div class="encabezado"><div><h1>${esc(nroOT(o.numero))}</h1>
+        <div class="sub">${esc(o.cliente || '')} · ${esc(o.dominio || '')}${o.interno ? ' · INT ' + esc(o.interno) : ''}</div></div>
+        <div>${chipEstadoOT(o.estado)}</div></div>
+      ${o.pausa ? `<div class="pausa-banner"><div><div class="titulo">OT pausada · ${esc(textoMotivo(o.pausa))}</div></div></div>` : ''}
+      <section class="tarjeta"><div class="datos">
+        <div class="dato"><div class="et">Tipo</div><div class="va">${esc(o.tipo)}</div></div>
+        <div class="dato"><div class="et">Unidad</div><div class="va">${esc([o.marca, o.modelo].filter(Boolean).join(' ') || '—')}</div></div>
+        <div class="dato"><div class="et">KM</div><div class="va">${num(o.km, 0)}</div></div>
+        <div class="dato"><div class="et">Ingreso</div><div class="va">${fecha(o.fecha_ingreso)}</div></div>
+      </div>${o.observaciones ? `<div class="sub" style="margin-top:8px">Obs.: ${esc(o.observaciones)}</div>` : ''}</section>
+      <h2 style="margin:6px 0 10px">Tareas</h2>
+      ${(o.tareas || []).map(t => `<div class="tarea-ot ${t.mia ? 'mia' : ''}">
+        <div class="arriba"><div><b>${t.renglon}. ${esc(t.descripcion)}</b>${Number(t.cantidad) !== 1 ? ` <span style="color:var(--gris)">× ${num(t.cantidad)}</span>` : ''}</div>${chipEstadoTarea(t.estado)}</div>
+        <div class="quien">${t.asignados.length ? 'Mecánico: ' + esc(t.asignados.join(', ')) : 'Sin asignar'}</div>
+        ${t.mia ? `<div class="acciones"><a class="btn btn-primario" href="#/tarea/${t.id}">Ir a mi tarea</a></div>`
+          : t.pedida ? '<div class="acciones"><span class="chip ambar">La pediste · esperando aprobación</span></div>'
+          : activa && !t.asignados.length && t.estado !== 'HECHA'
+            ? `<div class="acciones"><button class="btn btn-primario" data-pedir="${t.id}" data-desc="${esc(t.descripcion)}">Pedir esta tarea</button></div>` : ''}
+      </div>`).join('') || '<div class="tarjeta vacio">La OT no tiene tareas.</div>'}
+      ${activa ? '' : '<div class="nota">La OT está finalizada o cerrada: no se pueden pedir tareas.</div>'}`;
+    on(main, 'click', '[data-pedir]', async (ev, b) => {
+      const ok = await confirmar(`¿Pedís hacer "${b.dataset.desc}"? Le llega a Oficina y Administración; cuando lo aprueben, queda asignada a vos.`,
+        { titulo: 'Pedir tarea', textoOk: 'Pedir' });
+      if (!ok) return;
+      try { await Api.rpc('pedir_tarea', { p_tarea_id: Number(b.dataset.pedir) }); toast('Pedido enviado. Te avisan cuando lo aprueben.'); navegar(); }
+      catch (e) { toast(errMsg(e), 'error'); }
+    });
   }, ['MECANICO']);
 
   // ---------------- Detalle de tarea ----------------
@@ -710,18 +780,20 @@
 
   // ---------------- Mis solicitudes ----------------
   ruta(/^#\/mis-solicitudes$/, async main => {
-    const [sols, ots, pedidos] = await Promise.all([
+    const [sols, ots, pedidos, pedTareas] = await Promise.all([
       Api.select('solicitudes', { select: 'id,falla,tarea_propuesta,cantidad,estado,motivo_rechazo,creado_en,ot:ordenes_trabajo(numero)',
                                   mecanico_id: 'eq.' + st.usuarioId, order: 'creado_en.desc', limit: 30 }),
       Api.select('solicitudes_de_ot', { select: 'id,unidad_texto,km,tipo,tareas,repuestos,estado,motivo_rechazo,creado_en,unidad:unidades(dominio),ot:ordenes_trabajo(numero)',
                                         mecanico_id: 'eq.' + st.usuarioId, order: 'creado_en.desc', limit: 20 }),
       Api.select('pedidos_repuesto', { select: 'descripcion,codigo,cantidad,estado,nota,creado_en,ot:ordenes_trabajo(numero)',
-                                       pedido_por: 'eq.' + st.usuarioId, order: 'creado_en.desc', limit: 20 })
+                                       pedido_por: 'eq.' + st.usuarioId, order: 'creado_en.desc', limit: 20 }),
+      Api.select('pedidos_tarea', { select: 'id,descripcion,ot_numero,dominio,estado,motivo,creado_en',
+                                    mecanico_id: 'eq.' + st.usuarioId, order: 'creado_en.desc', limit: 20 })
     ]);
     const chip = e => e === 'APROBADA' ? '<span class="chip verde">Aceptada</span>' :
       e === 'RECHAZADA' ? '<span class="chip rojo">Rechazada</span>' : '<span class="chip">Pendiente</span>';
     main.innerHTML = `
-      <div class="encabezado"><div><h1>Mis solicitudes</h1><div class="sub">Para pedir una tarea en una OT, entrá a una de tus tareas.</div></div>
+      <div class="encabezado"><div><h1>Mis solicitudes</h1><div class="sub">Para pedir una tarea sin asignar, entrá a <a href="#/taller">OT del taller</a>.</div></div>
         <div class="acciones"><a class="btn btn-primario" href="#/pedir-ot">Pedir OT nueva</a></div></div>
       <h2 style="margin:6px 0 10px">Pedidos de OT</h2>
       <div class="lista-tareas">${ots.length ? ots.map(s => `
@@ -731,7 +803,15 @@
           <div class="linea3">${s.tareas.length} trabajos · ${s.repuestos.length} repuestos${s.ot ? ' · se creó la <b>' + esc(nroOT(s.ot.numero)) + '</b>' : ''}</div>
           ${s.estado === 'RECHAZADA' ? `<div class="linea3"><b>Motivo:</b> ${esc(s.motivo_rechazo)}</div>` : ''}
         </div>`).join('') : '<div class="tarjeta vacio">No pediste OT.</div>'}</div>
-      <h2 style="margin:20px 0 10px">Tareas pedidas</h2>
+      <h2 style="margin:20px 0 10px">Tareas que pediste hacer</h2>
+      <div class="lista-tareas">${pedTareas.length ? pedTareas.map(p => `
+        <div class="tarea-card">
+          <div class="linea1"><span>${esc(nroOT(p.ot_numero))} · ${esc(p.dominio || '')} · ${fechaHora(p.creado_en)}</span>
+            ${p.estado === 'APROBADO' ? '<span class="chip verde">Asignada</span>' : p.estado === 'RECHAZADO' ? '<span class="chip rojo">Rechazada</span>' : '<span class="chip">Pendiente</span>'}</div>
+          <div class="titulo">${esc(p.descripcion)}</div>
+          ${p.motivo ? `<div class="linea3"><b>Motivo:</b> ${esc(p.motivo)}</div>` : ''}
+        </div>`).join('') : '<div class="tarjeta vacio">No pediste tareas de otras OT.</div>'}</div>
+      <h2 style="margin:20px 0 10px">Tareas nuevas propuestas</h2>
       <div class="lista-tareas">${sols.length ? sols.map(s => `
         <div class="tarea-card">
           <div class="linea1"><span>${esc(nroOT(s.ot ? s.ot.numero : ''))} · ${fechaHora(s.creado_en)}</span>${chip(s.estado)}</div>

@@ -75,7 +75,7 @@ main { flex: 1; min-width: 0; padding: 20px; max-width: 1200px; }
   body.con-inferior main { padding-bottom: 88px; }
   .inferior {
     position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; background: var(--blanco);
-    border-top: 1px solid var(--linea); display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+    border-top: 1px solid var(--linea); display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));
     padding-bottom: env(safe-area-inset-bottom);
   }
   body:not(.con-inferior) .inferior { display: none; }
@@ -307,3 +307,12 @@ tr.bien td { background: #F1F9F3; }
 .plano-butacas .butaca.sel text { fill: #fff; }
 .plano-butacas .insignia { fill: var(--tinta); stroke: #fff; stroke-width: 2; }
 .plano-butacas .insignia-n { font-size: 11px; fill: #fff; }
+
+/* ---------- OT del taller (mecánico) ---------- */
+.pestanas.desplazable { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 4px; scrollbar-width: thin; }
+.pestanas.desplazable .pestana { flex: 0 0 auto; white-space: nowrap; }
+.tarea-ot { border: 1px solid var(--linea); border-radius: var(--radio); padding: 12px; margin-bottom: 10px; background: var(--blanco); }
+.tarea-ot.mia { border: 2px solid var(--naranja); }
+.tarea-ot .arriba { display: flex; justify-content: space-between; gap: 8px; align-items: flex-start; }
+.tarea-ot .quien { font-size: 14px; color: var(--gris); margin-top: 4px; }
+.tarea-ot .acciones { margin-top: 10px; }
