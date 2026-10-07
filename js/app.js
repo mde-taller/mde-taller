@@ -151,6 +151,28 @@ window.App = (() => {
   }
   const confirmar = (mensaje, opciones) => modal(Object.assign({ titulo: 'Confirmar', html: `<p>${esc(mensaje)}</p>` }, opciones || {}));
 
+  // ---------------- Falta de stock: cargar lo que hay y pedir el resto a Depósito ----------------
+  // Devuelve { cargar, pedir, nota } o null si se cancela.
+  async function decidirFaltante({ descripcion, codigo, cantidad, disponible, alGuardar }) {
+    const disp = Math.max(0, Math.round((Number(disponible) || 0) * 100) / 100);
+    const falta = Math.round((cantidad - disp) * 100) / 100;
+    const html = `<p style="margin-top:0"><b>${esc(descripcion || codigo)}</b><br><span class="nota">Cód. ${esc(codigo)}</span></p>
+      <p>${disp > 0 ? `Hay <b>${num(disp)}</b> en stock y necesitás <b>${num(cantidad)}</b>.` : `No hay stock. Necesitás <b>${num(cantidad)}</b>.`}</p>
+      <p class="nota">El pedido les llega a Depósito y Administración. Cuando lo tengan, le avisan a quien lo pidió.${alGuardar ? ' Se envía al guardar la OT.' : ''}</p>`;
+    const campos = [];
+    if (disp > 0) campos.push({ id: 'accion', label: '¿Qué hacemos?', tipo: 'select', valor: 'parcial',
+      opciones: [['parcial', `Cargar los ${num(disp)} que hay y pedir ${num(falta)}`], ['todo', `No cargar nada y pedir los ${num(cantidad)}`]] });
+    campos.push({ id: 'nota', label: 'Nota para Depósito (opcional)', valor: '' });
+    const v = await modal({ titulo: disp > 0 ? 'No alcanza el stock' : 'No hay stock', html, campos,
+                            textoOk: 'Pedir a Depósito', textoCancelar: 'Volver' });
+    if (!v) return null;
+    const parcial = disp > 0 && v.accion === 'parcial';
+    return { cargar: parcial ? disp : 0, pedir: parcial ? falta : cantidad, nota: v.nota.trim() || null };
+  }
+  const pedirADeposito = (otId, codigo, cantidad, tareaId, nota) =>
+    Api.rpc('pedir_repuesto', { p_ot_id: Number(otId), p_codigo: codigo, p_cantidad: cantidad, p_tarea_id: tareaId ? Number(tareaId) : null, p_detalle: nota || null });
+  const esFaltaDeStock = e => /stock insuficiente/i.test((e && e.message) || '');
+
   // ---------------- Buscadores desplegables (repuestos y unidades) ----------------
   // Mientras se escribe, muestran lo que coincide. alElegir(item) recibe el elegido.
   let acContador = 0;
@@ -558,7 +580,7 @@ window.App = (() => {
     st, cfg, esc, num, parseNum, nroOT, fecha, fechaHora, hoyISO, horaActual, duracion, tiene, esAdmin, esOficina,
     veTodas, limpiarCodigo, chipEstadoOT, chipEstadoTarea, errMsg, toast, modal, confirmar, ICONOS, ESTADOS_OT,
     TIPOS, ROLES, MOTIVOS, textoMotivo, pausaAbierta, chipPausa, autocompletarRepuesto,
-    autocompletarUnidad, unidadExacta,
+    autocompletarUnidad, unidadExacta, decidirFaltante, pedirADeposito, esFaltaDeStock,
     ruta, ir, on, navegar, actualizarAvisos, arrancar
   };
 })();

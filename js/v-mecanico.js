@@ -2,7 +2,7 @@
 (() => {
   const { st, esc, num, parseNum, nroOT, fechaHora, duracion, chipEstadoTarea, errMsg, toast, modal, confirmar,
           ICONOS, MOTIVOS, textoMotivo, pausaAbierta, chipPausa, autocompletarRepuesto, autocompletarUnidad, unidadExacta,
-          TIPOS, ruta, ir, on, navegar } = App;
+          decidirFaltante, pedirADeposito, esFaltaDeStock, TIPOS, ruta, ir, on, navegar } = App;
 
   let pestana = 'pendientes';
   const hora = d => d ? new Date(d).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
@@ -59,7 +59,7 @@
 
   // ---------------- Detalle de tarea ----------------
   ruta(/^#\/tarea\/(\d+)$/, async (main, id) => {
-    const [tareas, registros, repuestos] = await Promise.all([
+    const [tareas, registros, repuestos, pedidosTarea] = await Promise.all([
       Api.select('tareas_ot', {
         select: 'id,descripcion,horas,cantidad,horas_total,estado,ot_id,tempario(categoria:categorias_tempario(nombre)),' +
                 'ot:ordenes_trabajo(id,numero,estado,tipo,km,observaciones,unidad:unidades(dominio,interno,chasis,marca:marcas(nombre),modelo:modelos(nombre)),cliente:clientes(nombre),' +
@@ -68,7 +68,8 @@
         id: 'eq.' + id
       }),
       Api.select('registros_tiempo', { select: 'inicio,fin', tarea_id: 'eq.' + id, mecanico_id: 'eq.' + st.usuarioId, order: 'inicio' }),
-      Api.select('repuestos_ot', { select: 'id,codigo,cantidad,cargado_en,estado,repuesto:repuestos(descripcion)', tarea_id: 'eq.' + id, order: 'id' })
+      Api.select('repuestos_ot', { select: 'id,codigo,cantidad,cargado_en,estado,repuesto:repuestos(descripcion)', tarea_id: 'eq.' + id, order: 'id' }),
+      Api.select('pedidos_repuesto', { select: 'id,descripcion,codigo,cantidad,estado,nota,creado_en', tarea_id: 'eq.' + id, pausa_id: 'is.null', order: 'id' })
     ]);
     const t = tareas[0];
     if (!t) { main.innerHTML = '<div class="tarjeta">No se encontró la tarea o no está asignada a vos.</div>'; return; }
@@ -135,10 +136,15 @@
             <div class="info"><div class="desc">${esc(r.repuesto ? r.repuesto.descripcion : r.codigo)}</div>
               <div class="cod">Cód. ${esc(r.codigo)} · Cant. ${num(r.cantidad)}</div>
               <div style="margin-top:4px">${r.estado === 'ENTREGADO' ? '<span class="chip verde">Entregado</span>' : '<span class="chip ambar">Pendiente de entrega</span>'}</div></div>
-            ${editable ? `<button class="btn btn-chico" data-editar="${r.id}" data-cant="${r.cantidad}" aria-label="Modificar cantidad">${ICONOS.lapiz}</button>
+            ${editable ? `<button class="btn btn-chico" data-editar="${r.id}" data-cant="${r.cantidad}" data-codigo="${esc(r.codigo)}" data-desc="${esc(r.repuesto ? r.repuesto.descripcion : r.codigo)}" aria-label="Modificar cantidad">${ICONOS.lapiz}</button>
               <button class="btn btn-chico btn-peligro" data-quitar="${r.id}" aria-label="Quitar repuesto">Quitar</button>` : ''}
           </div>`).join('') : '<div class="vacio">Todavía no cargaste repuestos en esta tarea.</div>'}
         ${editable && repuestos.length ? '<div class="nota">Si modificás o quitás un repuesto, se avisa a Oficina y Administración.</div>' : ''}
+        ${pedidosTarea.length ? `<h3 style="margin-top:16px">Pedidos a Depósito</h3>
+          ${pedidosTarea.map(p => `<div class="repuesto-fila"><div class="info"><div class="desc">${esc(p.descripcion)}</div>
+            <div class="cod">Cód. ${esc(p.codigo || '—')} · Cant. ${num(p.cantidad)}</div>
+            <div style="margin-top:4px">${p.estado === 'RESUELTO' ? '<span class="chip verde">Ya está</span>' + (p.nota ? ` <span class="nota">${esc(p.nota)}</span>` : '') : '<span class="chip ambar">Pedido</span>'}</div></div></div>`).join('')}
+          ${pedidosTarea.some(p => p.estado === 'RESUELTO') && editable ? '<div class="nota">Cuando Depósito lo tiene, escanealo para cargarlo a la tarea.</div>' : ''}` : ''}
       </section>
       ${editable ? `<div style="display:flex;flex-direction:column;gap:8px">
         <a class="btn btn-primario btn-grande" href="#/escanear/${t.id}">${ICONOS.escanear} Escanear repuesto</a>
@@ -177,7 +183,21 @@
         const r = await Api.update('repuestos_ot', { id: 'eq.' + b.dataset.editar }, { cantidad: c });
         if (!r.length) throw new Error('No tenés permiso para hacer esto.');
         toast('Cantidad modificada'); navegar();
-      } catch (e) { toast(errMsg(e), 'error'); }
+      } catch (e) {
+        if (!esFaltaDeStock(e)) return toast(errMsg(e), 'error');
+        // No alcanza el stock para subir la cantidad: cargar lo que hay y pedir el resto.
+        const antes = Number(b.dataset.cant);
+        let libre = 0;
+        try { const x = (await Api.rpc('consultar_stock', { p_codigo: b.dataset.codigo }))[0]; libre = x ? Number(x.disponible) : 0; } catch (e2) { /* sigue con 0 */ }
+        const d = await decidirFaltante({ descripcion: b.dataset.desc, codigo: b.dataset.codigo, cantidad: c - antes, disponible: libre });
+        if (!d) return;
+        try {
+          if (d.cargar > 0) await Api.update('repuestos_ot', { id: 'eq.' + b.dataset.editar }, { cantidad: antes + d.cargar });
+          await pedirADeposito(t.ot_id, b.dataset.codigo, d.pedir, t.id, d.nota);
+          toast(d.cargar > 0 ? `Cantidad en ${num(antes + d.cargar)} y se pidieron ${num(d.pedir)} a Depósito` : `Se pidieron ${num(d.pedir)} a Depósito`);
+          navegar();
+        } catch (e3) { toast(errMsg(e3), 'error'); }
+      }
     });
     on(main, 'click', '[data-quitar]', async (ev, b) => {
       const ok = await confirmar('¿Quitar este repuesto de la tarea? El stock vuelve y se avisa a Oficina y Administración.',
@@ -342,8 +362,9 @@
             <input id="cant" value="1" inputmode="decimal" autocomplete="off">
             <button class="btn" type="button" data-paso="1" aria-label="Sumar">+</button></div></div>
         <div class="error-box oculto" id="err-cargar"></div>
-        <button class="btn btn-primario btn-grande" data-accion="cargar" ${disp > 0 ? '' : 'disabled'}>Cargar a la tarea</button>
-        ${disp > 0 ? '' : '<div class="nota" style="margin-top:8px">No hay stock: no se puede cargar. Si lo necesitás, pausá la OT por falta de repuesto y pedilo.</div>'}
+        ${disp > 0 ? '<button class="btn btn-primario btn-grande" data-accion="cargar">Cargar a la tarea</button>'
+          : `<button class="btn btn-primario btn-grande" data-accion="pedir">Pedir a Depósito</button>
+             <div class="nota" style="margin-top:8px">No hay stock. Pedilo y te avisan cuando esté. Si no podés seguir sin él, pausá la OT.</div>`}
         <button class="btn" style="margin-top:8px;width:100%" data-accion="otro">Escanear otro</button>
       </section>`;
       res.dataset.codigo = r.codigo;
@@ -425,13 +446,36 @@
       err.classList.add('oculto');
       const mostrar = m => { err.textContent = m; err.classList.remove('oculto'); };
       if (!(c > 0)) return mostrar('La cantidad tiene que ser mayor a cero.');
-      if (c > disp) return mostrar(`No alcanza el stock: hay ${num(disp)} y pediste ${num(c)}.`);
+      if (c > disp) return pedirFaltante(c, disp, b);
       b.disabled = true;
       try {
         await Api.insert('repuestos_ot', { ot_id: t.ot_id, tarea_id: t.id, codigo: res.dataset.codigo, cantidad: c });
         toast(`Cargado: ${res.dataset.descripcion} × ${num(c)}. Queda pendiente de entrega.`);
         ir('#/tarea/' + t.id);
-      } catch (e) { mostrar(errMsg(e)); b.disabled = false; }
+      } catch (e) {
+        if (esFaltaDeStock(e)) { b.disabled = false; return pedirFaltante(c, 0, b); }
+        mostrar(errMsg(e)); b.disabled = false;
+      }
+    });
+    // Sin stock suficiente: carga lo que hay (si quiere) y pide el resto a Depósito.
+    async function pedirFaltante(c, disp, b) {
+      const res = document.getElementById('resultado');
+      const err = document.getElementById('err-cargar');
+      const d = await decidirFaltante({ descripcion: res.dataset.descripcion, codigo: res.dataset.codigo, cantidad: c, disponible: disp });
+      if (!d) return;
+      b.disabled = true;
+      try {
+        if (d.cargar > 0) await Api.insert('repuestos_ot', { ot_id: t.ot_id, tarea_id: t.id, codigo: res.dataset.codigo, cantidad: d.cargar });
+        await pedirADeposito(t.ot_id, res.dataset.codigo, d.pedir, t.id, d.nota);
+        toast(d.cargar > 0 ? `Cargaste ${num(d.cargar)} y pediste ${num(d.pedir)} a Depósito` : `Pedido a Depósito: ${res.dataset.descripcion} × ${num(d.pedir)}`);
+        ir('#/tarea/' + t.id);
+      } catch (e) { err.textContent = errMsg(e); err.classList.remove('oculto'); b.disabled = false; }
+    }
+    on(main, 'click', '[data-accion=pedir]', (ev, b) => {
+      const c = parseNum(document.getElementById('cant').value);
+      const err = document.getElementById('err-cargar');
+      if (!(c > 0)) { err.textContent = 'La cantidad tiene que ser mayor a cero.'; err.classList.remove('oculto'); return; }
+      pedirFaltante(c, 0, b);
     });
     iniciarCamara();
   }, ['MECANICO']);
@@ -540,7 +584,8 @@
     const pintarReps = () => {
       $('q-reps').innerHTML = s.repuestos.length ? s.repuestos.map((r, i) => `<div class="repuesto-fila">
         <div class="info"><div class="desc">${esc(r.descripcion)} <span style="color:var(--gris)">× ${num(r.cantidad)}</span></div>
-          <div class="cod">Cód. ${esc(r.codigo)} · stock ${num(r.disponible)}</div></div>
+          <div class="cod">Cód. ${esc(r.codigo)} · stock ${num(r.disponible)}</div>
+          ${r.cantidad > r.disponible ? `<div class="nota" style="color:var(--rojo)">No alcanza el stock: ${r.disponible > 0 ? 'se carga lo que hay y el resto ' : ''}se le pide a Depósito al crear la OT.</div>` : ''}</div>
         <button class="btn btn-chico" type="button" data-quitar-r="${i}">Quitar</button></div>`).join('')
         : '<div class="vacio">Sin repuestos.</div>';
     };

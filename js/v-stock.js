@@ -191,7 +191,7 @@
     // ---- Pedidos de repuestos de los mecánicos ----
     if (pestana === 'pedidos') {
       const pedidos = await Api.select('pedidos_repuesto', {
-        select: 'id,descripcion,codigo,cantidad,estado,nota,creado_en,resuelto_en,ot:ordenes_trabajo(id,numero,unidad:unidades(dominio)),' +
+        select: 'id,descripcion,codigo,cantidad,estado,nota,detalle,creado_en,resuelto_en,ot:ordenes_trabajo(id,numero,unidad:unidades(dominio)),' +
                 'pedidor:usuarios!pedidos_repuesto_pedido_por_fkey(nombre),resolvio:usuarios!pedidos_repuesto_resuelto_por_fkey(nombre)',
         order: 'estado.asc,creado_en.desc', limit: 80 });
       const codigos = [...new Set(pedidos.filter(p => p.codigo && p.estado === 'PENDIENTE').map(p => p.codigo))];
@@ -200,10 +200,10 @@
       const disp = new Map(stock.map(x => [x.codigo, Number(x.disponible)]));
       const pend = pedidos.filter(p => p.estado === 'PENDIENTE'), hechos = pedidos.filter(p => p.estado !== 'PENDIENTE').slice(0, 30);
       cont.innerHTML = `
-        <p class="nota" style="margin-top:0">Los piden los mecánicos al pausar una OT por falta de repuesto. Cuando lo tengas, marcalo como resuelto: le llega el aviso al mecánico.</p>
+        <p class="nota" style="margin-top:0">Se piden cuando no hay stock al cargar un repuesto, o al pausar una OT por falta de repuesto. Cuando lo tengas, marcalo como resuelto: le llega el aviso a quien lo pidió.</p>
         <div class="tabla-caja" style="margin-bottom:20px"><table><thead><tr><th>Pedido</th><th>Repuesto</th><th class="num">Cant.</th><th class="num">Stock</th><th>OT</th><th>Pidió</th>${edita ? '<th></th>' : ''}</tr></thead><tbody>
           ${pend.map(p => `<tr><td>${fechaHora(p.creado_en)}</td>
-            <td><b>${esc(p.descripcion)}</b><div class="nota">${p.codigo ? esc(p.codigo) : 'No está en la lista: hay que conseguirlo'}</div></td>
+            <td><b>${esc(p.descripcion)}</b><div class="nota">${p.codigo ? esc(p.codigo) : 'No está en la lista: hay que conseguirlo'}</div>${p.detalle ? `<div class="nota">Nota: ${esc(p.detalle)}</div>` : ''}</td>
             <td class="num">${num(p.cantidad)}</td>
             <td class="num">${p.codigo ? `<b style="color:${(disp.get(p.codigo) || 0) >= Number(p.cantidad) ? 'var(--verde)' : 'var(--rojo)'}">${num(disp.get(p.codigo) || 0)}</b>` : '—'}</td>
             <td>${p.ot ? `<a href="#/ot/${p.ot.id}">${esc(nroOT(p.ot.numero))}</a><div class="nota">${esc(p.ot.unidad ? p.ot.unidad.dominio : '')}</div>` : ''}</td>
@@ -222,9 +222,9 @@
         const v = await App.modal({ titulo: 'Pedido resuelto', textoOk: 'Marcar resuelto',
           html: `<p><b>${esc(p.descripcion)}</b> × ${num(p.cantidad)} para ${esc(p.ot ? nroOT(p.ot.numero) : '')}</p>
                  <p class="nota">Si entró al depósito, cargalo antes en "Ingreso por lote" para que tenga stock.</p>`,
-          campos: [{ id: 'nota', label: 'Nota para el mecánico (opcional)', valor: '' }] });
+          campos: [{ id: 'nota', label: 'Nota para quien lo pidió (opcional)', valor: '' }] });
         if (!v) return;
-        try { await Api.rpc('resolver_pedido_repuesto', { p_id: p.id, p_nota: v.nota.trim() || null }); toast('Pedido resuelto: se avisó al mecánico'); navegar(); }
+        try { await Api.rpc('resolver_pedido_repuesto', { p_id: p.id, p_nota: v.nota.trim() || null }); toast('Pedido resuelto: se avisó a quien lo pidió'); navegar(); }
         catch (e) { toast(errMsg(e), 'error'); }
       });
     }

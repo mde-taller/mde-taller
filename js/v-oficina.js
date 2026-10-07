@@ -2,7 +2,8 @@
 (() => {
   const { st, cfg, esc, num, parseNum, nroOT, fecha, fechaHora, hoyISO, horaActual, esAdmin, esOficina,
           chipEstadoOT, chipEstadoTarea, errMsg, toast, modal, confirmar, ICONOS, ESTADOS_OT, TIPOS,
-          textoMotivo, pausaAbierta, chipPausa, autocompletarRepuesto, autocompletarUnidad, unidadExacta, ruta, ir, on, navegar } = App;
+          textoMotivo, pausaAbierta, chipPausa, autocompletarRepuesto, autocompletarUnidad, unidadExacta,
+          decidirFaltante, pedirADeposito, esFaltaDeStock, ruta, ir, on, navegar } = App;
 
   const cacheTempario = {};
   async function tempario(tipo) {
@@ -76,7 +77,7 @@
   // ---------------- Nueva OT ----------------
   ruta(/^#\/ot-nueva$/, async main => {
     const clientes = await Api.select('clientes', { select: 'id,nombre', order: 'nombre' });
-    const s = { unidad: null, tipo: '', tareas: [], repuestos: [] };
+    const s = { unidad: null, tipo: '', tareas: [], repuestos: [], pedidos: [] };
 
     main.innerHTML = `
       <div class="encabezado"><div><h1>Nueva orden de trabajo</h1><div class="sub">Fecha de ingreso: hoy (${fecha(hoyISO())}). El número se asigna solo al guardar.</div></div></div>
@@ -136,7 +137,8 @@
       $('n-resumen').innerHTML = `
         <div class="dato"><div class="et">Trabajos</div><div class="va">${s.tareas.length}</div></div>
         <div class="dato"><div class="et">Total horas</div><div class="va">${num(horas)} h</div></div>
-        <div class="dato"><div class="et">Repuestos</div><div class="va">${s.repuestos.length}</div></div>`;
+        <div class="dato"><div class="et">Repuestos</div><div class="va">${s.repuestos.length}</div></div>
+        ${s.pedidos.length ? `<div class="dato"><div class="et">A pedir a Depósito</div><div class="va">${s.pedidos.length}</div></div>` : ''}`;
     };
     const pintarTareas = () => {
       $('n-tareas').innerHTML = s.tareas.length ? s.tareas.map((t, i) => `<tr><td>${i + 1}</td>
@@ -148,8 +150,10 @@
       pintarResumen();
     };
     const pintarReps = () => {
-      $('n-reps').innerHTML = s.repuestos.length ? s.repuestos.map((r, i) => `<tr><td>${esc(r.codigo)}</td><td>${esc(r.descripcion)}</td>
+      $('n-reps').innerHTML = s.repuestos.length || s.pedidos.length ? s.repuestos.map((r, i) => `<tr><td>${esc(r.codigo)}</td><td>${esc(r.descripcion)}</td>
         <td class="num">${num(r.cantidad)}</td><td class="num">${num(r.disponible)}</td><td><button class="btn-texto" data-quitar-r="${i}">Quitar</button></td></tr>`).join('')
+        + s.pedidos.map((r, i) => `<tr><td>${esc(r.codigo)}</td><td>${esc(r.descripcion)}<div><span class="chip ambar">A pedir a Depósito</span>${r.nota ? ` <span class="nota">${esc(r.nota)}</span>` : ''}</div></td>
+        <td class="num">${num(r.cantidad)}</td><td class="num">—</td><td><button class="btn-texto" data-quitar-p="${i}">Quitar</button></td></tr>`).join('')
         : '<tr><td colspan="5" class="vacio">Sin repuestos.</td></tr>';
       pintarResumen();
     };
@@ -217,13 +221,22 @@
         const r = repElegido || (await Api.rpc('consultar_stock', { p_codigo: cod }))[0];
         if (!r) return toast('No existe un repuesto con ese código: elegilo de la lista', 'error');
         const yaPedido = s.repuestos.filter(x => x.codigo === r.codigo).reduce((a, x) => a + x.cantidad, 0);
-        if (cant + yaPedido > Number(r.disponible)) return toast(`No alcanza el stock de ${r.codigo}: hay ${num(r.disponible)}`, 'error');
-        s.repuestos.push({ codigo: r.codigo, descripcion: r.descripcion, cantidad: cant, disponible: Number(r.disponible) });
+        const libre = Number(r.disponible) - yaPedido;
+        if (cant > libre) {
+          // No alcanza: se carga lo que hay (si quiere) y el resto se le pide a Depósito al guardar.
+          const d = await decidirFaltante({ descripcion: r.descripcion, codigo: r.codigo, cantidad: cant, disponible: libre, alGuardar: true });
+          if (!d) return;
+          if (d.cargar > 0) s.repuestos.push({ codigo: r.codigo, descripcion: r.descripcion, cantidad: d.cargar, disponible: Number(r.disponible) });
+          s.pedidos.push({ codigo: r.codigo, descripcion: r.descripcion, cantidad: d.pedir, nota: d.nota });
+        } else {
+          s.repuestos.push({ codigo: r.codigo, descripcion: r.descripcion, cantidad: cant, disponible: Number(r.disponible) });
+        }
         repElegido = null; $('n-rep-cod').value = ''; $('n-rep-cant').value = ''; pintarReps(); $('n-rep-cod').focus();
       } catch (e) { toast(errMsg(e), 'error'); }
     });
     on(main, 'click', '[data-quitar-t]', (ev, b) => { s.tareas.splice(Number(b.dataset.quitarT), 1); pintarTareas(); });
     on(main, 'click', '[data-quitar-r]', (ev, b) => { s.repuestos.splice(Number(b.dataset.quitarR), 1); pintarReps(); });
+    on(main, 'click', '[data-quitar-p]', (ev, b) => { s.pedidos.splice(Number(b.dataset.quitarP), 1); pintarReps(); });
     $('n-guardar').addEventListener('click', async ev => {
       const err = $('n-error');
       const falta = [];
@@ -235,7 +248,7 @@
       if (!$('n-tipo').value) falta.push('tipo de unidad');
       const km = parseInt(String($('n-km').value).replace(/\D/g, ''), 10);
       if (isNaN(km)) falta.push('KM');
-      if (!s.tareas.length && !s.repuestos.length) falta.push('al menos un trabajo o repuesto');
+      if (!s.tareas.length && !s.repuestos.length) falta.push('al menos un trabajo o repuesto cargado');
       if (falta.length) { err.textContent = 'Falta: ' + falta.join(', ') + '.'; err.classList.remove('oculto'); return; }
       err.classList.add('oculto');
       ev.target.disabled = true; ev.target.textContent = 'Guardando…';
@@ -248,7 +261,12 @@
           p_observaciones: $('n-obs').value.trim() || null, p_presupuesto: $('n-presupuesto').value.trim() || null,
           p_ot_cliente: $('n-otcliente').value.trim() || null, p_hora_ingreso: $('n-hora').value || null
         });
-        toast('OT guardada');
+        let fallos = 0;
+        for (const p of s.pedidos) {
+          try { await pedirADeposito(id, p.codigo, p.cantidad, null, p.nota); } catch (e2) { fallos++; }
+        }
+        if (fallos) toast(`OT guardada, pero ${fallos} pedido${fallos === 1 ? '' : 's'} a Depósito no se pudo enviar: pedilo desde la OT.`, 'error');
+        else toast(s.pedidos.length ? `OT guardada. Se pidieron ${s.pedidos.length} repuesto${s.pedidos.length === 1 ? '' : 's'} a Depósito.` : 'OT guardada');
         ir('#/ot/' + id);
       } catch (e) {
         err.textContent = errMsg(e); err.classList.remove('oculto');
@@ -388,7 +406,7 @@
             <td class="num" style="color:${(disp.get(r.codigo) || 0) >= Number(r.cantidad) ? 'var(--verde)' : 'var(--rojo)'};font-weight:600">${num(disp.get(r.codigo) || 0)}</td></tr>`).join('')
             || '<tr><td colspan="5" class="vacio">Sin repuestos.</td></tr>'}
         </tbody></table></div>
-        ${pendiente && s.repuestos.length ? '<div class="nota" style="margin-top:6px">Al aceptar se descuenta el stock. Si no alcanza, destildá ese repuesto.</div>' : ''}
+        ${pendiente && s.repuestos.length ? '<div class="nota" style="margin-top:6px">Al aceptar se descuenta el stock. Lo que no alcance se carga hasta donde haya y el resto se le pide a Depósito.</div>' : ''}
       </section>
       <div class="error-box oculto" id="r-error"></div>
       ${pendiente ? `<div class="acciones" style="justify-content:flex-end;margin-bottom:24px">
@@ -440,21 +458,33 @@
         if (!(h >= 0)) return mostrar(`Revisá las horas de "${t.descripcion}".`);
         tareas.push(t.tempario_id ? { tempario_id: t.tempario_id, horas: h, cantidad: cant } : { descripcion: t.descripcion, horas: h, cantidad: cant });
       }
-      const repuestos = [];
+      const repuestos = [], aPedir = [];
+      const libre = new Map(disp);
       for (const [i, r] of s.repuestos.entries()) {
         if (!main.querySelector(`[data-inc-r="${i}"]`).checked) continue;
         const cant = parseNum(main.querySelector(`[data-cant-r="${i}"]`).value);
         if (!(cant > 0)) return mostrar(`Revisá la cantidad de ${r.codigo}.`);
-        repuestos.push({ codigo: r.codigo, cantidad: cant });
+        // Lo que hay se carga; lo que falta se le pide a Depósito.
+        const hay = Math.max(0, libre.get(r.codigo) || 0);
+        const carga = Math.min(cant, hay);
+        if (carga > 0) { repuestos.push({ codigo: r.codigo, cantidad: carga }); libre.set(r.codigo, hay - carga); }
+        if (cant > carga) aPedir.push({ codigo: r.codigo, cantidad: Math.round((cant - carga) * 100) / 100 });
       }
-      if (!tareas.length && !repuestos.length) return mostrar('La OT necesita al menos un trabajo o un repuesto.');
+      if (!tareas.length && !repuestos.length && !aPedir.length) return mostrar('La OT necesita al menos un trabajo o un repuesto.');
       b.disabled = true;
       try {
         const otId = await Api.rpc('aprobar_solicitud_ot', {
           p_id: s.id, p_unidad_id: unidadInp ? unidadElegida.id : null, p_km: km,
           p_tipo: document.getElementById('r-tipo').value, p_tareas: tareas, p_repuestos: repuestos,
           p_observaciones: document.getElementById('r-obs').value.trim() || null });
-        toast('OT creada. Asigná las tareas a los mecánicos.');
+        let fallos = 0;
+        for (const p of aPedir) {
+          try { await pedirADeposito(otId, p.codigo, p.cantidad, null, `Del pedido de OT de ${s.mecanico ? s.mecanico.nombre : 'un mecánico'}`); }
+          catch (e2) { fallos++; }
+        }
+        toast(fallos ? `OT creada, pero ${fallos} pedido${fallos === 1 ? '' : 's'} a Depósito no se pudo enviar.`
+                     : aPedir.length ? `OT creada. Se pidieron ${aPedir.length} repuesto${aPedir.length === 1 ? '' : 's'} a Depósito.` : 'OT creada. Asigná las tareas a los mecánicos.',
+              fallos ? 'error' : undefined);
         ir('#/ot/' + otId);
       } catch (e) { mostrar(errMsg(e)); b.disabled = false; }
     });
@@ -483,7 +513,7 @@
       puede ? mecanicos() : Promise.resolve([]),
       puede ? Api.select('solicitudes', { select: selSolicitud, ot_id: 'eq.' + id, estado: 'eq.PENDIENTE', order: 'creado_en' }) : Promise.resolve([]),
       esAdmin() ? Api.select('horas_reales', { select: 'tarea_id,mecanico,horas_reales,en_curso', ot_id: 'eq.' + id }) : Promise.resolve([]),
-      Api.select('pedidos_repuesto', { select: 'id,descripcion,codigo,cantidad,estado,nota,creado_en,pedidor:usuarios!pedidos_repuesto_pedido_por_fkey(nombre)', ot_id: 'eq.' + id, order: 'creado_en.desc' })
+      Api.select('pedidos_repuesto', { select: 'id,descripcion,codigo,cantidad,estado,nota,detalle,creado_en,pedidor:usuarios!pedidos_repuesto_pedido_por_fkey(nombre)', ot_id: 'eq.' + id, order: 'creado_en.desc' })
     ]);
     const u = ot.unidad || {};
     const entrega = App.tiene('DEPOSITO') || esAdmin();
@@ -563,7 +593,7 @@
           </section>
           ${pedidos.length || pausasViejas.length ? `<section class="tarjeta"><h2>Pausas y pedidos de repuesto</h2>
             ${pedidos.length ? `<div class="tabla-caja" style="margin-bottom:12px"><table><thead><tr><th>Repuesto pedido</th><th class="num">Cant.</th><th>Pidió</th><th>Estado</th></tr></thead><tbody>
-              ${pedidos.map(p => `<tr><td>${esc(p.descripcion)}${p.codigo ? `<div class="nota">${esc(p.codigo)}</div>` : '<div class="nota">No está en la lista</div>'}</td>
+              ${pedidos.map(p => `<tr><td>${esc(p.descripcion)}${p.codigo ? `<div class="nota">${esc(p.codigo)}</div>` : '<div class="nota">No está en la lista</div>'}${p.detalle ? `<div class="nota">Nota: ${esc(p.detalle)}</div>` : ''}</td>
                 <td class="num">${num(p.cantidad)}</td><td>${esc(p.pedidor ? p.pedidor.nombre : '')}<div class="nota">${fechaHora(p.creado_en)}</div></td>
                 <td>${p.estado === 'RESUELTO' ? `<span class="chip verde">Resuelto</span>${p.nota ? ` <span class="nota">${esc(p.nota)}</span>` : ''}` : '<span class="chip ambar">Pendiente</span>'}</td></tr>`).join('')}
               </tbody></table></div>` : ''}
@@ -714,12 +744,24 @@
       if (!cod) return;
       if (!(cant > 0)) return toast('Indicá una cantidad mayor a cero', 'error');
       try {
-        const r = repElegido || (await Api.rpc('consultar_stock', { p_codigo: cod }))[0];
+        const r = (await Api.rpc('consultar_stock', { p_codigo: repElegido ? repElegido.codigo : cod }))[0];
         if (!r) return toast('No existe un repuesto con ese código: elegilo de la lista', 'error');
-        await Api.insert('repuestos_ot', { ot_id: Number(id), codigo: r.codigo, cantidad: cant });
+        if (cant > Number(r.disponible)) return faltaEnOT(r, cant, Number(r.disponible));
+        try { await Api.insert('repuestos_ot', { ot_id: Number(id), codigo: r.codigo, cantidad: cant }); }
+        catch (e) { if (esFaltaDeStock(e)) return faltaEnOT(r, cant, 0); throw e; }
         toast('Repuesto agregado'); recargar();
       } catch (e) { toast(errMsg(e), 'error'); }
     });
+    async function faltaEnOT(r, cant, disp) {
+      const d = await decidirFaltante({ descripcion: r.descripcion, codigo: r.codigo, cantidad: cant, disponible: disp });
+      if (!d) return;
+      try {
+        if (d.cargar > 0) await Api.insert('repuestos_ot', { ot_id: Number(id), codigo: r.codigo, cantidad: d.cargar });
+        await pedirADeposito(id, r.codigo, d.pedir, null, d.nota);
+        toast(d.cargar > 0 ? `Se cargaron ${num(d.cargar)} y se pidieron ${num(d.pedir)} a Depósito` : `Pedido a Depósito: ${r.descripcion} × ${num(d.pedir)}`);
+        recargar();
+      } catch (e) { toast(errMsg(e), 'error'); }
+    }
     const borrar = main.querySelector('[data-accion=borrar-ot]');
     if (borrar) borrar.addEventListener('click', async () => {
       const v = await modal({ titulo: 'Eliminar OT', textoOk: 'Eliminar', peligro: true,
