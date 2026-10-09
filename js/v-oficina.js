@@ -3,7 +3,7 @@
   const { st, cfg, esc, num, parseNum, nroOT, fecha, fechaHora, hoyISO, horaActual, esAdmin, esOficina,
           chipEstadoOT, chipEstadoTarea, errMsg, toast, modal, confirmar, ICONOS, ESTADOS_OT, TIPOS,
           textoMotivo, pausaAbierta, chipPausa, autocompletarRepuesto, autocompletarUnidad, unidadExacta,
-          decidirFaltante, pedirADeposito, esFaltaDeStock, esTareaButaca, resumenButacas, ruta, ir, on, navegar } = App;
+          decidirFaltante, pedirADeposito, esFaltaDeStock, esTareaButaca, resumenButacas, duracionTexto, ruta, ir, on, navegar } = App;
 
   const cacheTempario = {};
   async function tempario(tipo) {
@@ -527,6 +527,48 @@
     });
   }, ['ADMINISTRADOR']);
 
+  // ---------------- Registro de la OT (solo Administrador) ----------------
+  const TIPO_REG = {
+    'OT CREADA': ['OT creada', '', 'estados'], 'ESTADO': ['Estado', 'azul', 'estados'], 'INGRESO': ['Fecha de ingreso', '', 'estados'],
+    'SALIDA': ['Salida', '', 'estados'], 'PAUSA': ['Pausa', 'rojo', 'pausas'], 'TRABAJO': ['Trabajó', 'verde', 'trabajo'],
+    'ASIGNACIÓN': ['Asignada', '', 'trabajo'], 'TAREA TERMINADA': ['Terminó', 'verde', 'trabajo'], 'TAREA SOLICITADA': ['Solicitó tarea', '', 'trabajo'],
+    'PIDIÓ TAREA': ['Pidió tarea', '', 'trabajo'], 'REPUESTO CARGADO': ['Repuesto', 'ambar', 'repuestos'],
+    'REPUESTO ENTREGADO': ['Entregado', 'ambar', 'repuestos'], 'PEDIDO DE REPUESTO': ['Pedido a Depósito', 'ambar', 'repuestos'] };
+  const FILTROS_REG = [['todo', 'Todo'], ['pausas', 'Pausas'], ['estados', 'Estados'], ['trabajo', 'Mecánicos'], ['repuestos', 'Repuestos']];
+  let filtroReg = 'todo';
+  const fh = d => new Date(d).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+  const soloHora = d => new Date(d).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+  const mismoDia = (a, b) => new Date(a).toDateString() === new Date(b).toDateString();
+  const minutosEntre = (a, b) => ((b ? new Date(b) : new Date()) - new Date(a)) / 60000;
+  function pintarRegistro(cont, eventos) {
+    // Resumen: tiempo en pausa por motivo y tiempo trabajado por mecánico.
+    const pausas = {}, trabajo = {};
+    for (const e of eventos) {
+      if (e.tipo === 'PAUSA') { const k = e.detalle.split(/[:·]/)[0].trim(); pausas[k] = (pausas[k] || 0) + minutosEntre(e.momento, e.hasta); }
+      if (e.tipo === 'TRABAJO') trabajo[e.usuario || '—'] = (trabajo[e.usuario || '—'] || 0) + minutosEntre(e.momento, e.hasta);
+    }
+    const lista = eventos.filter(e => filtroReg === 'todo' || (TIPO_REG[e.tipo] || [])[2] === filtroReg);
+    cont.innerHTML = `
+      <div class="datos" style="margin-bottom:12px">
+        <div class="dato"><div class="et">Tiempo en pausa</div><div class="va">${Object.keys(pausas).length
+          ? Object.entries(pausas).map(([k, m]) => `${esc(k)}: ${duracionTexto(m)}`).join('<br>') : 'Sin pausas'}</div></div>
+        <div class="dato"><div class="et">Tiempo trabajado (cronómetro)</div><div class="va">${Object.keys(trabajo).length
+          ? Object.entries(trabajo).map(([k, m]) => `${esc(k)}: ${duracionTexto(m)}`).join('<br>') : 'Sin registros'}</div></div>
+      </div>
+      <div class="pestanas desplazable">${FILTROS_REG.map(([f, l]) => `<button class="pestana ${f === filtroReg ? 'activa' : ''}" data-filtro-reg="${f}">${l}</button>`).join('')}</div>
+      <div class="registro">${lista.length ? lista.map(e => {
+        const [et, color] = TIPO_REG[e.tipo] || [e.tipo, ''];
+        const conIntervalo = ['PAUSA', 'TRABAJO', 'PEDIDO DE REPUESTO', 'TAREA SOLICITADA', 'PIDIÓ TAREA'].includes(e.tipo);
+        const hasta = !conIntervalo ? '' : e.hasta ? ` → ${mismoDia(e.momento, e.hasta) ? soloHora(e.hasta) : fh(e.hasta)}`
+          : ['PAUSA', 'TRABAJO'].includes(e.tipo) ? ' → <b>sigue</b>' : '';
+        const dur = conIntervalo && (e.hasta || ['PAUSA', 'TRABAJO'].includes(e.tipo)) ? `<div class="reg-dur">${duracionTexto(minutosEntre(e.momento, e.hasta))}${e.hasta ? '' : ' hasta ahora'}</div>` : '';
+        return `<div class="reg-fila">
+          <div class="reg-cuando">${fh(e.momento)}${hasta}${dur}</div>
+          <div class="reg-que"><span class="chip ${color}">${esc(et)}</span> ${esc(e.detalle || '')}</div>
+          <div class="reg-quien">${esc(e.usuario || '')}</div></div>`;
+      }).join('') : '<div class="vacio">No hay movimientos de este tipo.</div>'}</div>`;
+  }
+
   // ---------------- Detalle de OT ----------------
   async function cargarOT(id) {
     const [ots, tareas, reps] = await Promise.all([
@@ -548,12 +590,13 @@
     const { ot, tareas, reps } = await cargarOT(id);
     if (!ot) { main.innerHTML = '<div class="tarjeta">No se encontró la OT.</div>'; return; }
     const puede = esOficina();
-    const [mecs, sols, reales, pedidos, pedTareas] = await Promise.all([
+    const [mecs, sols, reales, pedidos, pedTareas, registro] = await Promise.all([
       puede ? mecanicos() : Promise.resolve([]),
       puede ? Api.select('solicitudes', { select: selSolicitud, ot_id: 'eq.' + id, estado: 'eq.PENDIENTE', order: 'creado_en' }) : Promise.resolve([]),
       esAdmin() ? Api.select('horas_reales', { select: 'tarea_id,mecanico,horas_reales,en_curso', ot_id: 'eq.' + id }) : Promise.resolve([]),
       Api.select('pedidos_repuesto', { select: 'id,descripcion,codigo,cantidad,estado,nota,detalle,creado_en,pedidor:usuarios!pedidos_repuesto_pedido_por_fkey(nombre)', ot_id: 'eq.' + id, order: 'creado_en.desc' }),
-      puede ? Api.select('pedidos_tarea', { select: 'id,tarea_id,descripcion,mecanico:usuarios!pedidos_tarea_mecanico_id_fkey(nombre)', ot_id: 'eq.' + id, estado: 'eq.PENDIENTE', order: 'creado_en' }) : Promise.resolve([])
+      puede ? Api.select('pedidos_tarea', { select: 'id,tarea_id,descripcion,mecanico:usuarios!pedidos_tarea_mecanico_id_fkey(nombre)', ot_id: 'eq.' + id, estado: 'eq.PENDIENTE', order: 'creado_en' }) : Promise.resolve([]),
+      esAdmin() ? Api.rpc('registro_ot', { p_ot_id: Number(id) }).catch(() => null) : Promise.resolve(null)
     ]);
     const u = ot.unidad || {};
     const entrega = App.tiene('DEPOSITO') || esAdmin();
@@ -643,6 +686,9 @@
               </tbody></table></div>` : ''}
             ${pausasViejas.map(p => `<div class="nota" style="margin-bottom:4px">• ${esc(textoMotivo(p.motivo))}${p.detalle ? ' (' + esc(p.detalle) + ')' : ''}: ${hora(p.inicio)} → ${hora(p.fin)} · pausó ${esc(p.pausador ? p.pausador.nombre : '')}, reanudó ${esc(p.reanudador ? p.reanudador.nombre : '')}</div>`).join('')}
           </section>` : ''}
+          ${registro ? `<section class="tarjeta no-imprimir"><h2>Registro de la OT <span class="chip oscuro" style="vertical-align:middle">Solo Administrador</span></h2>
+            <div class="nota" style="margin-bottom:10px">Todo lo que pasó en la OT, en orden: estados, pausas con su motivo y duración, tramos de trabajo de cada mecánico, repuestos y pedidos.</div>
+            <div id="o-registro"></div></section>` : ''}
         </div>
         <div class="secundaria">
           <section class="tarjeta"><h2>Datos de la OT</h2>
@@ -679,6 +725,11 @@
         </div>
       </div>`;
 
+    if (registro) {
+      const cont = document.getElementById('o-registro');
+      pintarRegistro(cont, registro);
+      on(cont, 'click', '[data-filtro-reg]', (ev, b) => { filtroReg = b.dataset.filtroReg; pintarRegistro(cont, registro); });
+    }
     // Entrega de repuestos: Depósito o Administrador.
     const entregar = async ids => {
       try { const n = await Api.rpc('entregar_repuestos', { p_ids: ids }); toast(n === 1 ? 'Repuesto entregado' : `${n} repuestos entregados`); navegar(); }

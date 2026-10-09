@@ -1,6 +1,6 @@
 // MDE · Taller — administración: tempario, usuarios y reportes.
 (() => {
-  const { st, cfg, esc, num, parseNum, nroOT, fecha, hoyISO, errMsg, toast, modal, confirmar, TIPOS, ROLES, ruta, on, navegar } = App;
+  const { st, cfg, esc, num, parseNum, nroOT, fecha, hoyISO, errMsg, toast, modal, confirmar, TIPOS, ROLES, duracionTexto, ruta, on, navegar } = App;
 
   // ---------------- Tempario ----------------
   let fTipo = '', fCat = '', fTexto = '', vistaTemp = 'lista';
@@ -258,9 +258,32 @@
         <div class="campo"><label for="r-hasta">Hasta</label><input id="r-hasta" type="date" value="${rHasta}"></div>
         <div class="campo"><button class="btn btn-primario" type="submit">Ver</button></div>
       </form>
-      <div id="r-res"><div class="vacio">Cargando…</div></div>`;
+      <div id="r-res"><div class="vacio">Cargando…</div></div>
+      <div id="r-pausas"></div>`;
     document.getElementById('f-rep').addEventListener('submit', ev => {
       ev.preventDefault(); rDesde = document.getElementById('r-desde').value; rHasta = document.getElementById('r-hasta').value; navegar(); });
+
+    // Pausas del período (por fecha de la pausa): tiempo perdido por motivo y por mecánico.
+    Api.rpc('reporte_pausas', { p_desde: rDesde, p_hasta: rHasta }).then(pausas => {
+      const caja = document.getElementById('r-pausas');
+      if (!caja) return;
+      const sumar = (clave) => {
+        const o = {};
+        for (const p of pausas) { const k = p[clave] || '—'; const x = o[k] = o[k] || { n: 0, min: 0 }; x.n++; x.min += Number(p.minutos); }
+        return Object.entries(o).sort((a, b) => b[1].min - a[1].min);
+      };
+      const fh = d => d ? new Date(d).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
+      const tabla = (titulo, filas) => `<div><h3 style="margin:0 0 6px">${titulo}</h3><div class="tabla-caja"><table><thead><tr><th>${titulo === 'Por motivo' ? 'Motivo' : 'Mecánico'}</th><th class="num">Pausas</th><th class="num">Tiempo</th></tr></thead><tbody>
+        ${filas.map(([k, x]) => `<tr><td><b>${esc(k)}</b></td><td class="num">${x.n}</td><td class="num">${duracionTexto(x.min)}</td></tr>`).join('') || '<tr><td colspan="3" class="vacio">Sin pausas.</td></tr>'}</tbody></table></div></div>`;
+      caja.innerHTML = `<h2 style="margin:22px 0 10px">Pausas de OT en el período</h2>
+        <div class="dos-col" style="gap:16px;margin-bottom:12px">${tabla('Por motivo', sumar('motivo'))}${tabla('Por mecánico', sumar('pauso'))}</div>
+        <div class="tabla-caja"><table><thead><tr><th>OT</th><th>Motivo</th><th>Pausó</th><th>Desde</th><th>Hasta</th><th class="num">Duración</th><th>Reanudó</th></tr></thead><tbody>
+          ${pausas.map(p => `<tr><td><a href="#/ot/${p.ot_id}">${esc(nroOT(p.ot_numero))}</a><div class="nota">${esc(p.dominio || '')} · ${esc(p.cliente || '')}</div></td>
+            <td>${esc(p.motivo)}${p.detalle ? `<div class="nota">${esc(p.detalle)}</div>` : ''}</td><td>${esc(p.pauso || '')}</td>
+            <td>${fh(p.inicio)}</td><td>${p.fin ? fh(p.fin) : '<b>sigue pausada</b>'}</td><td class="num">${duracionTexto(p.minutos)}</td><td>${esc(p.reanudo || '')}</td></tr>`).join('')
+            || '<tr><td colspan="7" class="vacio">No hubo pausas en el período.</td></tr>'}
+        </tbody></table></div>`;
+    }).catch(e => { const caja = document.getElementById('r-pausas'); if (caja) caja.innerHTML = `<div class="error-box">${esc(errMsg(e))}</div>`; });
 
     const ots = await Api.select('ordenes_trabajo', {
       select: 'id,numero,estado,cliente:clientes(nombre),tareas:tareas_ot(id,horas_total,estado)',

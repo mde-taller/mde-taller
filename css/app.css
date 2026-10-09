@@ -316,3 +316,14 @@ tr.bien td { background: #F1F9F3; }
 .tarea-ot .arriba { display: flex; justify-content: space-between; gap: 8px; align-items: flex-start; }
 .tarea-ot .quien { font-size: 14px; color: var(--gris); margin-top: 4px; }
 .tarea-ot .acciones { margin-top: 10px; }
+
+/* ---------- Registro de la OT ---------- */
+.registro { border-top: 1px solid var(--linea); }
+.reg-fila { display: grid; grid-template-columns: 170px minmax(0, 1fr) 140px; gap: 4px 12px; padding: 10px 0; border-bottom: 1px solid #EEEAE2; font-size: 15px; }
+.reg-cuando { color: var(--gris); font-variant-numeric: tabular-nums; }
+.reg-dur { font-weight: 700; color: var(--tinta); }
+.reg-quien { color: var(--gris); text-align: right; }
+@media (max-width: 700px) {
+  .reg-fila { grid-template-columns: 1fr auto; }
+  .reg-que { grid-column: 1 / -1; grid-row: 2; }
+}

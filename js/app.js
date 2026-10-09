@@ -26,6 +26,13 @@ window.App = (() => {
   const fechaHora = d => d ? new Date(d).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
   const hoyISO = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); };
   const horaActual = () => new Date().toTimeString().slice(0, 5);
+  // Duración legible: "45 min", "2 h 10 min", "1 d 3 h".
+  const duracionTexto = min => {
+    min = Math.max(0, Math.round(Number(min) || 0));
+    if (min < 60) return `${min} min`;
+    const d = Math.floor(min / 1440), h = Math.floor((min % 1440) / 60), m = min % 60;
+    return d ? `${d} d${h ? ' ' + h + ' h' : ''}` : `${h} h${m ? ' ' + m + ' min' : ''}`;
+  };
   const duracion = ms => {
     const s = Math.max(0, Math.floor(ms / 1000));
     const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60;
@@ -41,7 +48,7 @@ window.App = (() => {
   const TIPOS = ['LIVIANA', 'PESADA', 'MINIBÚS'];
   const ROLES = [['ADMINISTRADOR', 'Administrador'], ['OFICINA', 'Oficina'], ['DEPOSITO', 'Depósito'], ['MECANICO', 'Mecánico']];
   const MOTIVOS = [['FALTA DE REPUESTO', 'Falta de repuesto'], ['ESPERA DEL CLIENTE', 'Espera del cliente'],
-                   ['FIN DE JORNADA', 'Fin de jornada'], ['TRABAJO EXTERNO', 'Trabajo externo'], ['OTRO', 'Otro']];
+                   ['FIN DE JORNADA', 'Fin de jornada'], ['TRABAJO EXTERNO', 'Trabajo externo'], ['COMIDA', 'Comida'], ['OTRO', 'Otro']];
   const textoMotivo = m => (MOTIVOS.find(x => x[0] === m) || [m, m])[1];
   // Pausa abierta de una OT (las pausas vienen embebidas en la consulta de la OT)
   const pausaAbierta = ot => ot && Array.isArray(ot.pausas) ? ot.pausas.find(p => !p.fin) || null : null;
@@ -591,7 +598,7 @@ window.App = (() => {
   }
 
   return {
-    st, cfg, esc, num, parseNum, nroOT, fecha, fechaHora, hoyISO, horaActual, duracion, tiene, esAdmin, esOficina,
+    st, cfg, esc, num, parseNum, nroOT, fecha, fechaHora, hoyISO, horaActual, duracion, duracionTexto, tiene, esAdmin, esOficina,
     veTodas, limpiarCodigo, chipEstadoOT, chipEstadoTarea, errMsg, toast, modal, confirmar, ICONOS, ESTADOS_OT,
     TIPOS, ROLES, MOTIVOS, textoMotivo, pausaAbierta, chipPausa, autocompletarRepuesto,
     autocompletarUnidad, unidadExacta, decidirFaltante, pedirADeposito, esFaltaDeStock,
