@@ -386,6 +386,7 @@ window.App = (() => {
       items.push(['#/tempario', 'Tempario']);
       items.push(['#/usuarios', 'Usuarios']);
       items.push(['#/reportes', 'Reportes']);
+      items.push(['#/trazabilidad', 'Trazabilidad']);
     }
     items.push(['grupo', 'General']);
     items.push(['#/avisos', 'Avisos']);

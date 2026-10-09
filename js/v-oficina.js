@@ -618,6 +618,7 @@
           ${puede ? `<select id="o-estado" aria-label="Estado de la OT" style="width:auto">${ESTADOS_OT.map(e => `<option ${e === ot.estado ? 'selected' : ''}>${esc(e)}</option>`).join('')}</select>`
                   : chipEstadoOT(ot.estado)}
           <a class="btn" href="#/imprimir/${ot.id}">Imprimir / PDF</a>
+          ${esAdmin() ? `<a class="btn" href="#/trazabilidad/${ot.id}">Trazabilidad</a>` : ''}
           ${esAdmin() ? '<button class="btn btn-peligro" data-accion="borrar-ot">Eliminar</button>' : ''}
         </div>
       </div>

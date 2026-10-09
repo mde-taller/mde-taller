@@ -327,3 +327,80 @@ tr.bien td { background: #F1F9F3; }
   .reg-fila { grid-template-columns: 1fr auto; }
   .reg-que { grid-column: 1 / -1; grid-row: 2; }
 }
+
+/* ---------- Informes de trazabilidad ---------- */
+@media screen { .solo-imprimir { display: none !important; } }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.kpi { background: var(--blanco); border: 1px solid var(--linea); border-radius: 12px; padding: 12px 14px; min-width: 0; }
+.kpi-et { font-size: 13px; font-weight: 600; color: var(--gris); }
+.kpi-va { font-family: var(--titulo); font-size: 30px; font-weight: 700; line-height: 1.1; margin: 2px 0; font-variant-numeric: tabular-nums; }
+.kpi-sub { font-size: 13px; color: var(--gris); }
+.informe-cabecera { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-end; gap: 8px 16px;
+  border-bottom: 3px solid var(--tinta); padding-bottom: 10px; margin-bottom: 16px; }
+.informe-cabecera h1 { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.informe-empresa { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--gris); margin-bottom: 2px; }
+.informe-emitido { font-size: 13px; color: var(--gris); }
+.informe-pie { margin: 4px 0 16px; }
+.informe-tabla table { font-size: 14px; }
+.informe-tabla th, .informe-tabla td { padding: 10px 10px; }
+.informe-tabla td { vertical-align: top; }
+.informe-tabla .c-diag { min-width: 200px; }
+.informe-tabla .c-obs { min-width: 150px; }
+.informe-tabla tfoot td { border-top: 2px solid var(--linea); background: #FAF8F4; }
+.recorte { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.informe .tarjeta h2 { margin-bottom: 10px; }
+.informe table { font-size: 14px; }
+.informe td { vertical-align: top; }
+
+/* Línea de tiempo */
+.linea-tiempo { display: block; width: 100%; height: auto; min-width: 640px; font-family: var(--texto); }
+.lt-marco { overflow-x: auto; }
+.lt-estado { fill: var(--chip); stroke: #fff; stroke-width: 1; }
+.lt-estado.b { fill: var(--linea); }
+.lt-txt-estado { font-size: 11px; font-weight: 600; fill: var(--tinta); pointer-events: none; }
+.lt-trabajo { fill: var(--azul); stroke: #fff; stroke-width: 1; }
+.lt-pausa { fill: url(#rayado); stroke: #fff; stroke-width: 1; }
+.lt-dia { stroke: #A8A49B; stroke-width: 1; stroke-dasharray: 3 3; }
+.lt-grilla { stroke: #EEEAE2; stroke-width: 1; }
+.lt-eje { font-size: 11px; fill: var(--gris); font-variant-numeric: tabular-nums; }
+.lt-fila { font-size: 12px; font-weight: 600; fill: var(--tinta); }
+.lt-base { stroke: #EEEAE2; stroke-width: 1; }
+.lt-hito { stroke: var(--tinta); stroke-width: 1.5; }
+.lt-hito-txt { font-size: 11px; font-weight: 700; fill: var(--tinta); }
+.linea-tiempo g:hover > rect { stroke: var(--tinta); stroke-width: 1.5; }
+.lt-leyenda { display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: center; margin-top: 10px; font-size: 14px; }
+.lt-leyenda > span { display: inline-flex; align-items: center; gap: 6px; }
+.lt-k { display: inline-block; width: 18px; height: 12px; border-radius: 3px; }
+.lt-k.trabajo { background: var(--azul); }
+.lt-k.pausa { background: repeating-linear-gradient(45deg, var(--naranja) 0 3px, #E7A07E 3px 5px); }
+.lt-k.estado { background: var(--chip); border: 1px solid var(--linea); }
+
+@media print {
+  .kpis { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 3mm; margin-bottom: 4mm; }
+  .informe .datos { grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 2mm 4mm; }
+  .informe .dato .et { font-size: 8pt; }
+  .informe .dato .va { font-size: 10pt; }
+  .informe .nota, .informe-tabla .nota { font-size: 7.5pt; }
+  .informe .chip, .informe-tabla .chip { font-size: 7pt; padding: 1px 6px; }
+  .informe-tabla .c-diag { min-width: 48mm; }
+  .informe-tabla .c-obs { min-width: 32mm; }
+  .kpi { padding: 2mm 3mm; border-color: #999; break-inside: avoid; }
+  .kpi-va { font-size: 15pt; }
+  .kpi-et, .kpi-sub { font-size: 8pt; }
+  .informe-cabecera { margin-bottom: 4mm; padding-bottom: 2mm; }
+  .informe-cabecera h1 { font-size: 18pt; }
+  .informe .tarjeta { border: 0; padding: 0; margin-bottom: 5mm; break-inside: auto; }
+  .informe .tarjeta h2 { font-size: 13pt; margin-bottom: 2mm; break-after: avoid; }
+  .informe .tabla-caja, .informe-tabla.tabla-caja { border: 1px solid #999; border-radius: 0; overflow: visible; }
+  .informe table, .informe-tabla table { font-size: 8.5pt; }
+  .informe th, .informe td, .informe-tabla th, .informe-tabla td { padding: 1.2mm 2mm; border-bottom: 1px solid #CCC; color: #000; }
+  .informe-tabla th { white-space: normal; }
+  .informe tr, .informe-tabla tr { break-inside: avoid; }
+  .informe thead, .informe-tabla thead { display: table-header-group; }
+  .recorte { display: block; -webkit-line-clamp: unset; overflow: visible; }
+  .linea-tiempo { min-width: 0; }
+  .lt-marco { overflow: visible; }
+  .lt-leyenda .nota { display: none; }
+  .informe-tabla tr.clic:hover td { background: none; }
+  .chip { border: 1px solid #999; }
+}
