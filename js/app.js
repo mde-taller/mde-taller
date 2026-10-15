@@ -375,6 +375,7 @@ window.App = (() => {
       items.push(['grupo', 'Taller']);
       items.push(['#/ots', 'Órdenes de trabajo']);
       if (esOficina()) {
+        items.push(['#/parte-diario', 'Parte diario']);
         items.push(['#/ot-nueva', 'Nueva OT']);
         items.push(['#/solicitudes', 'Solicitudes']);
         items.push(['#/clientes', 'Clientes y unidades']);

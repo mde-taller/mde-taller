@@ -404,3 +404,49 @@ tr.bien td { background: #F1F9F3; }
   .informe-tabla tr.clic:hover td { background: none; }
   .chip { border: 1px solid #999; }
 }
+
+/* ---------- Parte diario ---------- */
+.kpi-unidad { font-family: var(--texto); font-size: 15px; font-weight: 600; color: var(--gris); }
+.parte-semaforo-cab { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 4px 12px; margin-bottom: 10px; }
+.sem-verde { background: #15803D; color: #fff; }
+.sem-amarillo { background: #F3C98B; color: #5A3300; }
+.sem-rojo { background: #8F1D15; color: #fff; }
+.sem-barra { display: flex; gap: 2px; height: 30px; border-radius: 8px; overflow: hidden; margin-bottom: 10px; }
+.sem-barra > div { display: flex; align-items: center; justify-content: center; min-width: 28px; font-weight: 700; font-size: 14px; }
+.sem-leyenda { display: flex; flex-wrap: wrap; gap: 6px 20px; font-size: 14px; }
+.sem-leyenda > span { display: inline-flex; align-items: center; gap: 6px; }
+.sem-k { display: inline-block; width: 14px; height: 14px; border-radius: 3px; }
+.sem-chip { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 13px; font-weight: 700; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.parte-tabla td { vertical-align: top; }
+.parte-tabla tr.sem-rojo-fila td:first-child { box-shadow: inset 5px 0 0 #8F1D15; }
+.parte-tabla tr.sem-amarillo-fila td:first-child { box-shadow: inset 5px 0 0 #E0A852; }
+.parte-tabla tr.sem-verde-fila td:first-child { box-shadow: inset 5px 0 0 #15803D; }
+.parte-ahora { font-size: 14px; }
+.parte-ahora.trabajo b { color: var(--azul); }
+.parte-ahora.pausa b { color: var(--naranja-osc); }
+.parte-ahora.quieta { color: var(--gris); }
+.parte-lista { display: none; flex-direction: column; gap: 10px; }
+.parte-card { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; border: 1px solid var(--linea); border-left-width: 6px;
+  border-radius: 12px; background: var(--blanco); color: var(--tinta); text-decoration: none; }
+.parte-card:hover { color: var(--tinta); border-color: var(--gris); }
+.parte-card.sem-rojo-fila { border-left-color: #8F1D15; background: var(--blanco); color: var(--tinta); }
+.parte-card.sem-amarillo-fila { border-left-color: #E0A852; background: var(--blanco); color: var(--tinta); }
+.parte-card.sem-verde-fila { border-left-color: #15803D; background: var(--blanco); color: var(--tinta); }
+.parte-card .arriba { display: flex; align-items: center; gap: 8px; }
+.parte-card .pc-ot { margin-left: auto; font-weight: 700; font-size: 14px; }
+.parte-card .pc-unidad { font-size: 15px; }
+@media (max-width: 699px) {
+  .parte-tabla { display: none; }
+  .parte-lista { display: flex; }
+}
+@media print {
+  .parte-tabla { display: block !important; border: 1px solid #999; border-radius: 0; overflow: visible; }
+  .parte-lista { display: none !important; }
+  .parte-tabla table { font-size: 8.5pt; }
+  .parte-tabla th, .parte-tabla td { padding: 1.2mm 2mm; color: #000; }
+  .parte-tabla tr { break-inside: avoid; }
+  .parte-tabla .nota, .parte-ahora { font-size: 7.5pt; }
+  .parte-tabla .chip, .sem-chip { font-size: 7.5pt; padding: 1px 6px; }
+  .parte-unidades.tarjeta, .tarjeta:has(.sem-barra) { border: 0; padding: 0; margin-bottom: 4mm; }
+  .sem-barra { height: 6mm; }
+}
