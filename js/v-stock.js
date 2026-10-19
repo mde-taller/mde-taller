@@ -156,7 +156,7 @@
     if (pestana === 'entregar') {
       const filas = await Api.select('repuestos_ot', {
         select: 'id,codigo,cantidad,cargado_en,repuesto:repuestos(descripcion),ot:ordenes_trabajo(id,numero,unidad:unidades(dominio,interno)),' +
-                'tarea:tareas_ot(renglon,descripcion),cargador:usuarios!repuestos_ot_cargado_por_fkey(nombre)',
+                'tarea:tareas_ot(renglon,descripcion),cargador:usuarios!repuestos_ot_cargado_por_fkey(nombre:nombre_visible)',
         estado: 'eq.PENDIENTE', order: 'cargado_en', limit: 300 });
       cont.innerHTML = `
         <p class="nota" style="margin-top:0">Repuestos cargados en las OT que todavía no se entregaron. El stock ya está descontado. Al marcarlos entregados, le llega el aviso a quien los cargó.</p>
@@ -192,7 +192,7 @@
     if (pestana === 'pedidos') {
       const pedidos = await Api.select('pedidos_repuesto', {
         select: 'id,descripcion,codigo,cantidad,estado,nota,detalle,creado_en,resuelto_en,ot:ordenes_trabajo(id,numero,unidad:unidades(dominio)),' +
-                'pedidor:usuarios!pedidos_repuesto_pedido_por_fkey(nombre),resolvio:usuarios!pedidos_repuesto_resuelto_por_fkey(nombre)',
+                'pedidor:usuarios!pedidos_repuesto_pedido_por_fkey(nombre:nombre_visible),resolvio:usuarios!pedidos_repuesto_resuelto_por_fkey(nombre:nombre_visible)',
         order: 'estado.asc,creado_en.desc', limit: 80 });
       const codigos = [...new Set(pedidos.filter(p => p.codigo && p.estado === 'PENDIENTE').map(p => p.codigo))];
       const stock = codigos.length ? await Api.select('stock_disponible', { select: 'codigo,disponible',
@@ -290,7 +290,7 @@
     // ---- Movimientos ----
     if (pestana === 'movs') {
       const movs = await Api.select('movimientos_stock', {
-        select: 'fecha,tipo,codigo,cantidad,observacion,usuario_nombre,usuario:usuarios(nombre),ot:ordenes_trabajo(id,numero),repuesto:repuestos(descripcion)',
+        select: 'fecha,tipo,codigo,cantidad,observacion,usuario_nombre,usuario:usuarios(nombre:nombre_visible),ot:ordenes_trabajo(id,numero),repuesto:repuestos(descripcion)',
         order: 'fecha.desc', limit: 80 });
       cont.innerHTML = `<div class="tabla-caja"><table><thead><tr><th>Fecha</th><th>Tipo</th><th>Código</th><th>Repuesto</th><th class="num">Cantidad</th><th>OT</th><th>Usuario</th><th>Observación</th></tr></thead><tbody>
         ${movs.map(m => `<tr><td>${fechaHora(m.fecha)}</td><td><span class="chip ${m.tipo === 'SALIDA' ? 'ambar' : m.tipo === 'ENTRADA' ? 'verde' : ''}">${esc(m.tipo)}</span></td>

@@ -179,12 +179,12 @@
   }
 
   ruta(/^#\/usuarios$/, async main => {
-    const usuarios = await Api.select('usuarios', { select: 'id,nombre,email,activo,roles:usuario_roles(rol)', order: 'nombre' }).catch(() =>
-      Api.select('usuarios', { select: 'id,nombre,activo,roles:usuario_roles(rol)', order: 'nombre' }));
+    const usuarios = await Api.select('usuarios', { select: 'id,nombre,email,activo,responsable_id,roles:usuario_roles(rol)', order: 'nombre' }).catch(() =>
+      Api.select('usuarios', { select: 'id,nombre,activo,responsable_id,roles:usuario_roles(rol)', order: 'nombre' }));
     main.innerHTML = `
       <div class="encabezado"><div><h1>Usuarios</h1><div class="sub">Marcá los roles de cada persona. Un usuario puede tener más de un rol.</div></div>
         <div class="acciones"><button class="btn btn-primario" data-accion="nuevo">Nuevo usuario</button></div></div>
-      <div class="tabla-caja"><table><thead><tr><th>Nombre</th><th>Usuario</th>${ROLES.map(([, t]) => `<th>${t}</th>`).join('')}<th>Activo</th><th></th></tr></thead><tbody>
+      <div class="tabla-caja"><table><thead><tr><th>Nombre</th><th>Usuario</th>${ROLES.map(([, t]) => `<th>${t}</th>`).join('')}<th>Activo</th><th>Ayudante de</th><th></th></tr></thead><tbody>
         ${usuarios.map(u => {
           const roles = (u.roles || []).map(r => r.rol);
           const yo = u.id === st.usuarioId;
@@ -192,11 +192,15 @@
             ${ROLES.map(([r, t]) => `<td><label class="check"><input type="checkbox" data-u="${u.id}" data-rol="${r}" ${roles.includes(r) ? 'checked' : ''}
               ${yo && r === 'ADMINISTRADOR' ? 'disabled' : ''} aria-label="${t} para ${esc(u.nombre)}"></label></td>`).join('')}
             <td><label class="check"><input type="checkbox" data-activo="${u.id}" ${u.activo ? 'checked' : ''} ${yo ? 'disabled' : ''} aria-label="Activo"></label></td>
+            <td><select data-responsable="${u.id}" aria-label="${esc(u.nombre)} es ayudante de" style="min-width:150px">
+              <option value="">—</option>${usuarios.filter(x => x.id !== u.id && !x.responsable_id).map(x => `<option value="${x.id}" ${x.id === u.responsable_id ? 'selected' : ''}>${esc(x.nombre)}</option>`).join('')}
+            </select></td>
             <td style="white-space:nowrap"><button class="btn-texto" data-renombrar="${u.id}">Nombre</button>
               <button class="btn-texto" data-clave="${u.id}">Contraseña</button></td></tr>`;
-        }).join('') || '<tr><td colspan="8" class="vacio">Sin usuarios.</td></tr>'}
+        }).join('') || '<tr><td colspan="9" class="vacio">Sin usuarios.</td></tr>'}
       </tbody></table></div>
-      <div class="nota" style="margin-top:8px">Un usuario sin roles no puede entrar. Desactivar a alguien le quita el acceso sin borrar su historial.</div>`;
+      <div class="nota" style="margin-top:8px">Un usuario sin roles no puede entrar. Desactivar a alguien le quita el acceso sin borrar su historial.</div>
+      <div class="nota" style="margin-top:4px"><b>Ayudante de:</b> lo que hace un ayudante figura a nombre de su responsable en todas las pantallas, avisos e informes. Solo vos, en el registro de cada OT, ves que lo hizo el ayudante.</div>`;
 
     on(main, 'change', '[data-rol]', async (ev, cb) => {
       try {
@@ -204,6 +208,12 @@
         else await Api.remove('usuario_roles', { usuario_id: 'eq.' + cb.dataset.u, rol: 'eq.' + cb.dataset.rol });
         toast('Roles actualizados');
       } catch (e) { toast(errMsg(e), 'error'); cb.checked = !cb.checked; }
+    });
+    on(main, 'change', '[data-responsable]', async (ev, sel) => {
+      try {
+        await Api.update('usuarios', { id: 'eq.' + sel.dataset.responsable }, { responsable_id: sel.value || null });
+        toast(sel.value ? 'Guardado: queda como ayudante' : 'Ya no es ayudante'); navegar();
+      } catch (e) { toast(errMsg(e), 'error'); navegar(); }
     });
     on(main, 'change', '[data-activo]', async (ev, cb) => {
       try { await Api.update('usuarios', { id: 'eq.' + cb.dataset.activo }, { activo: cb.checked }); toast(cb.checked ? 'Usuario activado' : 'Usuario desactivado'); }
@@ -292,8 +302,8 @@
     const tareas = ots.flatMap(o => (o.tareas || []).map(t => Object.assign({ ot: o }, t)));
     const tareaPorId = new Map(tareas.map(t => [t.id, t]));
     const [reales, asig] = await Promise.all([
-      porPartes(otIds, ids => Api.select('horas_reales', { select: 'tarea_id,mecanico_id,mecanico,horas_reales', ot_id: `in.(${ids.join(',')})` })),
-      porPartes(tareas.map(t => t.id), ids => Api.select('asignaciones', { select: 'tarea_id,mecanico_id,terminada_en,usuario:usuarios(nombre)', tarea_id: `in.(${ids.join(',')})` }))
+      porPartes(otIds, ids => Api.select('horas_reales', { select: 'tarea_id,mecanico_id,mecanico,horas_reales,responsable_id', ot_id: `in.(${ids.join(',')})` })),
+      porPartes(tareas.map(t => t.id), ids => Api.select('asignaciones', { select: 'tarea_id,mecanico_id,terminada_en,usuario:usuarios(nombre:nombre_visible,rid:id_visible)', tarea_id: `in.(${ids.join(',')})` }))
     ]);
 
     const totalHoras = tareas.reduce((a, t) => a + Number(t.horas_total || 0), 0);
@@ -307,13 +317,19 @@
       c.ots++; for (const t of o.tareas || []) { c.horas += Number(t.horas_total || 0); c.tareas++; if (t.estado === 'HECHA') c.hechas++; }
     }
     const mecs = {};
+    // Los ayudantes cuentan para su responsable; una tarea con los dos asignados cuenta una vez.
+    const vistas = new Set();
     for (const a of asig) {
-      const m = mecs[a.mecanico_id] = mecs[a.mecanico_id] || { nombre: a.usuario ? a.usuario.nombre : '', asignadas: 0, terminadas: 0, horasTemp: 0, horasReal: 0 };
-      m.asignadas++; if (a.terminada_en) m.terminadas++;
+      const k = (a.usuario && a.usuario.rid) || a.mecanico_id;
+      const m = mecs[k] = mecs[k] || { nombre: a.usuario ? a.usuario.nombre : '', asignadas: 0, terminadas: 0, horasTemp: 0, horasReal: 0 };
+      if (vistas.has(k + '|' + a.tarea_id)) { if (a.terminada_en && !m['t' + a.tarea_id]) { m.terminadas++; m['t' + a.tarea_id] = 1; } continue; }
+      vistas.add(k + '|' + a.tarea_id);
+      m.asignadas++; if (a.terminada_en) { m.terminadas++; m['t' + a.tarea_id] = 1; }
       const t = tareaPorId.get(a.tarea_id); if (t) m.horasTemp += Number(t.horas_total || 0);
     }
     for (const r of reales) {
-      const m = mecs[r.mecanico_id] = mecs[r.mecanico_id] || { nombre: r.mecanico, asignadas: 0, terminadas: 0, horasTemp: 0, horasReal: 0 };
+      const k = r.responsable_id || r.mecanico_id;
+      const m = mecs[k] = mecs[k] || { nombre: r.mecanico, asignadas: 0, terminadas: 0, horasTemp: 0, horasReal: 0 };
       m.horasReal += Number(r.horas_reales || 0);
     }
     const pct = (a, b) => b > 0 ? Math.round(a / b * 100) + '%' : '—';

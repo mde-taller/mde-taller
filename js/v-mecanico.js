@@ -16,7 +16,7 @@
       Api.select('asignaciones', {
         select: 'terminada_en,tarea:tareas_ot(id,descripcion,horas,cantidad,horas_total,estado,renglon,' +
                 'ot:ordenes_trabajo(id,numero,estado,tipo,unidad:unidades(dominio,interno),cliente:clientes(nombre),pausas:pausas_ot(motivo,fin)),' +
-                'companeros:asignaciones(mecanico_id,usuario:usuarios(nombre)))',
+                'companeros:asignaciones(mecanico_id,usuario:usuarios(nombre:nombre_visible)))',
         mecanico_id: 'eq.' + st.usuarioId
       }),
       Api.select('registros_tiempo', { select: 'tarea_id,inicio', mecanico_id: 'eq.' + st.usuarioId, fin: 'is.null' })
@@ -45,7 +45,7 @@
       </div>
       <div class="lista-tareas">
         ${lista.length ? lista.map(({ t, grupo }) => {
-          const otros = (t.companeros || []).filter(c => c.mecanico_id !== st.usuarioId).map(c => c.usuario && c.usuario.nombre).filter(Boolean);
+          const otros = [...new Set((t.companeros || []).filter(c => c.mecanico_id !== st.usuarioId).map(c => c.usuario && c.usuario.nombre).filter(n => n && n !== st.nombre))];
           const pausa = grupo !== 'hechas' ? pausaAbierta(t.ot) : null;
           const estado = pausa ? chipPausa(pausa) : grupo === 'curso' ? '<span class="chip azul">En curso</span>' : chipEstadoTarea(grupo === 'hechas' ? 'HECHA' : t.estado);
           return `<a class="tarea-card ${grupo === 'curso' ? 'en-curso' : ''}" href="#/tarea/${t.id}">
@@ -134,8 +134,8 @@
       Api.select('tareas_ot', {
         select: 'id,descripcion,horas,cantidad,horas_total,estado,ot_id,tempario(categoria:categorias_tempario(nombre)),' +
                 'ot:ordenes_trabajo(id,numero,estado,tipo,km,observaciones,unidad:unidades(dominio,interno,chasis,marca:marcas(nombre),modelo:modelos(nombre)),cliente:clientes(nombre),' +
-                'pausas:pausas_ot(id,motivo,detalle,inicio,fin,pausador:usuarios!pausas_ot_pausada_por_fkey(nombre))),' +
-                'asignaciones(mecanico_id,terminada_en,usuario:usuarios(nombre))',
+                'pausas:pausas_ot(id,motivo,detalle,inicio,fin,pausador:usuarios!pausas_ot_pausada_por_fkey(nombre:nombre_visible))),' +
+                'asignaciones(mecanico_id,terminada_en,usuario:usuarios(nombre:nombre_visible))',
         id: 'eq.' + id
       }),
       Api.select('registros_tiempo', { select: 'inicio,fin', tarea_id: 'eq.' + id, mecanico_id: 'eq.' + st.usuarioId, order: 'inicio' }),
@@ -149,7 +149,8 @@
     const pausa = pausaAbierta(ot);
     const pedidos = pausa ? await Api.select('pedidos_repuesto', { select: 'descripcion,codigo,cantidad,estado,nota', ot_id: 'eq.' + ot.id, pausa_id: 'eq.' + pausa.id, order: 'id' }) : [];
     const mia = (t.asignaciones || []).find(a => a.mecanico_id === st.usuarioId);
-    const otros = (t.asignaciones || []).filter(a => a.mecanico_id !== st.usuarioId);
+    const otros = (t.asignaciones || []).filter(a => a.mecanico_id !== st.usuarioId && !(a.usuario && a.usuario.nombre === st.nombre))
+      .filter((a, i, arr) => arr.findIndex(b => (b.usuario && b.usuario.nombre) === (a.usuario && a.usuario.nombre)) === i);
     const abierto = registros.find(r => !r.fin);
     const terminadaYo = mia && mia.terminada_en;
     const otCerrada = ['CERRADA', 'PRUEBA'].includes(ot.estado);

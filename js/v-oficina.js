@@ -17,8 +17,9 @@
   const buscarEnTempario = (lista, texto) => lista.find(y => claveTarea(y) === texto)
     || lista.filter(y => y.tarea.toUpperCase() === texto.toUpperCase()).find((y, i, arr) => arr.length === 1);
   async function mecanicos() {
-    const filas = await Api.select('usuario_roles', { select: 'usuario_id,usuario:usuarios(nombre,activo)', rol: 'eq.MECANICO' });
-    return filas.filter(f => f.usuario && f.usuario.activo).map(f => ({ id: f.usuario_id, nombre: f.usuario.nombre }))
+    const filas = await Api.select('usuario_roles', { select: 'usuario_id,usuario:usuarios(nombre,activo,responsable_id,responsable:nombre_visible)', rol: 'eq.MECANICO' });
+    return filas.filter(f => f.usuario && f.usuario.activo)
+      .map(f => ({ id: f.usuario_id, nombre: f.usuario.responsable_id ? `${f.usuario.nombre} (ayudante de ${f.usuario.responsable})` : f.usuario.nombre }))
       .sort((a, b) => a.nombre.localeCompare(b.nombre));
   }
   const hora = d => d ? new Date(d).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
@@ -304,10 +305,10 @@
     catch (e) { toast(errMsg(e), 'error'); return false; }
   }
   const selSolicitud = 'id,falla,tarea_propuesta,cantidad,tempario_id,estado,motivo_rechazo,creado_en,resuelta_en,' +
-                       'ot:ordenes_trabajo(id,numero,unidad:unidades(dominio)),mecanico:usuarios!solicitudes_mecanico_id_fkey(id,nombre)';
+                       'ot:ordenes_trabajo(id,numero,unidad:unidades(dominio)),mecanico:usuarios!solicitudes_mecanico_id_fkey(id,nombre:nombre_visible)';
   const selSolicitudOT = 'id,unidad_texto,km,tipo,tareas,repuestos,observaciones,estado,motivo_rechazo,creado_en,resuelta_en,' +
                          'unidad:unidades(id,dominio,interno,cliente:clientes(nombre)),ot:ordenes_trabajo(id,numero),' +
-                         'mecanico:usuarios!solicitudes_de_ot_mecanico_id_fkey(id,nombre)';
+                         'mecanico:usuarios!solicitudes_de_ot_mecanico_id_fkey(id,nombre:nombre_visible)';
 
   // Pedido de un mecánico para hacer una tarea sin asignar: aprobar (queda asignada) o rechazar con motivo.
   async function resolverPedidoTarea(id, aprobar, quien, que) {
@@ -325,7 +326,7 @@
       return true;
     } catch (e) { toast(errMsg(e), 'error'); return false; }
   }
-  const selPedidoTarea = 'id,descripcion,ot_id,ot_numero,dominio,creado_en,mecanico:usuarios!pedidos_tarea_mecanico_id_fkey(nombre)';
+  const selPedidoTarea = 'id,descripcion,ot_id,ot_numero,dominio,creado_en,mecanico:usuarios!pedidos_tarea_mecanico_id_fkey(nombre:nombre_visible)';
 
   ruta(/^#\/solicitudes$/, async main => {
     const [pend, resueltas, mecs, pedidosOT, pedTareas] = await Promise.all([
@@ -573,12 +574,12 @@
   async function cargarOT(id) {
     const [ots, tareas, reps] = await Promise.all([
       Api.select('ordenes_trabajo', { select: '*,unidad:unidades(id,dominio,interno,chasis,tipo,marca:marcas(nombre),modelo:modelos(nombre)),cliente:clientes(nombre,cuit,telefono),' +
-                                              'solicitante:usuarios!ordenes_trabajo_solicitada_por_fkey(nombre),' +
-                                              'pausas:pausas_ot(id,motivo,detalle,inicio,fin,pausador:usuarios!pausas_ot_pausada_por_fkey(nombre),reanudador:usuarios!pausas_ot_reanudada_por_fkey(nombre))',
+                                              'solicitante:usuarios!ordenes_trabajo_solicitada_por_fkey(nombre:nombre_visible),' +
+                                              'pausas:pausas_ot(id,motivo,detalle,inicio,fin,pausador:usuarios!pausas_ot_pausada_por_fkey(nombre:nombre_visible),reanudador:usuarios!pausas_ot_reanudada_por_fkey(nombre:nombre_visible))',
                                       id: 'eq.' + id }),
-      Api.select('tareas_ot', { select: 'id,renglon,descripcion,horas,cantidad,horas_total,estado,tempario(categoria:categorias_tempario(nombre)),asignaciones(mecanico_id,terminada_en,usuario:usuarios(nombre))',
+      Api.select('tareas_ot', { select: 'id,renglon,descripcion,horas,cantidad,horas_total,estado,tempario(categoria:categorias_tempario(nombre)),asignaciones(mecanico_id,terminada_en,usuario:usuarios(nombre:nombre_visible,responsable_id))',
                                 ot_id: 'eq.' + id, order: 'renglon' }),
-      Api.select('repuestos_ot', { select: 'id,codigo,cantidad,tarea_id,cargado_en,estado,entregado_en,repuesto:repuestos(descripcion),cargador:usuarios!repuestos_ot_cargado_por_fkey(nombre),entregador:usuarios!repuestos_ot_entregado_por_fkey(nombre)',
+      Api.select('repuestos_ot', { select: 'id,codigo,cantidad,tarea_id,cargado_en,estado,entregado_en,repuesto:repuestos(descripcion),cargador:usuarios!repuestos_ot_cargado_por_fkey(nombre:nombre_visible),entregador:usuarios!repuestos_ot_entregado_por_fkey(nombre:nombre_visible)',
                                    ot_id: 'eq.' + id, order: 'id' })
     ]);
     const butacas = tareas.length ? await Api.select('butacas_tarea', { select: 'tarea_id,butaca,trabajos', tarea_id: 'in.(' + tareas.map(t => t.id).join(',') + ')' }) : [];
@@ -594,8 +595,8 @@
       puede ? mecanicos() : Promise.resolve([]),
       puede ? Api.select('solicitudes', { select: selSolicitud, ot_id: 'eq.' + id, estado: 'eq.PENDIENTE', order: 'creado_en' }) : Promise.resolve([]),
       esAdmin() ? Api.select('horas_reales', { select: 'tarea_id,mecanico,horas_reales,en_curso', ot_id: 'eq.' + id }) : Promise.resolve([]),
-      Api.select('pedidos_repuesto', { select: 'id,descripcion,codigo,cantidad,estado,nota,detalle,creado_en,pedidor:usuarios!pedidos_repuesto_pedido_por_fkey(nombre)', ot_id: 'eq.' + id, order: 'creado_en.desc' }),
-      puede ? Api.select('pedidos_tarea', { select: 'id,tarea_id,descripcion,mecanico:usuarios!pedidos_tarea_mecanico_id_fkey(nombre)', ot_id: 'eq.' + id, estado: 'eq.PENDIENTE', order: 'creado_en' }) : Promise.resolve([]),
+      Api.select('pedidos_repuesto', { select: 'id,descripcion,codigo,cantidad,estado,nota,detalle,creado_en,pedidor:usuarios!pedidos_repuesto_pedido_por_fkey(nombre:nombre_visible)', ot_id: 'eq.' + id, order: 'creado_en.desc' }),
+      puede ? Api.select('pedidos_tarea', { select: 'id,tarea_id,descripcion,mecanico:usuarios!pedidos_tarea_mecanico_id_fkey(nombre:nombre_visible)', ot_id: 'eq.' + id, estado: 'eq.PENDIENTE', order: 'creado_en' }) : Promise.resolve([]),
       esAdmin() ? Api.rpc('registro_ot', { p_ot_id: Number(id) }).catch(() => null) : Promise.resolve(null)
     ]);
     const u = ot.unidad || {};
@@ -606,7 +607,12 @@
     const totalHoras = tareas.reduce((a, t) => a + Number(t.horas_total || 0), 0);
     const renglonDe = new Map(tareas.map(t => [t.id, t.renglon]));
     const realesPorTarea = {};
-    for (const r of reales) (realesPorTarea[r.tarea_id] = realesPorTarea[r.tarea_id] || []).push(r);
+    for (const r of reales) {
+      const l = realesPorTarea[r.tarea_id] = realesPorTarea[r.tarea_id] || [];
+      const ya = l.find(x => x.mecanico === r.mecanico);   // ayudante y responsable en una sola línea
+      if (ya) { ya.horas_reales = Number(ya.horas_reales) + Number(r.horas_reales); ya.en_curso = ya.en_curso || r.en_curso; }
+      else l.push(Object.assign({}, r));
+    }
     const temp = puede ? await tempario(ot.tipo) : [];
 
     main.innerHTML = `
@@ -644,7 +650,7 @@
                   ${t.butacas.length ? `<div class="nota">Butacas: ${esc(resumenButacas(t.butacas))}</div>` : ''}
                   ${puede && (t.butacas.length || esTareaButaca(t.descripcion)) && !['CERRADA', 'PRUEBA'].includes(ot.estado) ? `<a href="#/butacas/${t.id}" class="nota">${t.butacas.length ? 'Cambiar butacas' : 'Marcar butacas en el plano'}</a>` : ''}</td>
                 <td class="num">${num(t.cantidad)}</td><td class="num">${num(t.horas)}</td><td class="num"><b>${num(t.horas_total)}</b></td>
-                <td>${asig.map(a => `<span class="chip" style="margin:2px">${esc(a.usuario ? a.usuario.nombre : '')}${a.terminada_en ? ' ✓' : ''}${puede ? `<button class="chip-x" data-desasignar="${t.id}" data-mec="${a.mecanico_id}" aria-label="Quitar a ${esc(a.usuario ? a.usuario.nombre : '')}">×</button>` : ''}</span>`).join('')}
+                <td>${asig.map(a => `<span class="chip" style="margin:2px">${esc(a.usuario ? a.usuario.nombre : '')}${a.usuario && a.usuario.responsable_id ? ' (ayudante)' : ''}${a.terminada_en ? ' ✓' : ''}${puede ? `<button class="chip-x" data-desasignar="${t.id}" data-mec="${a.mecanico_id}" aria-label="Quitar a ${esc(a.usuario ? a.usuario.nombre : '')}">×</button>` : ''}</span>`).join('')}
                   ${puede && asig.length < 2 && libres.length ? `<select data-asignar="${t.id}" aria-label="Asignar mecánico" style="width:auto;min-height:36px;margin-top:4px">
                     <option value="">${asig.length ? '+ segundo mecánico' : 'Asignar…'}</option>${libres.map(m => `<option value="${m.id}">${esc(m.nombre)}</option>`).join('')}</select>` : ''}
                   ${!asig.length && !puede ? '<span class="nota">Sin asignar</span>' : ''}

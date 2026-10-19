@@ -211,16 +211,16 @@
     paginaImpresion('portrait');
     const [ots, tareas, reps, pedidos, registro] = await Promise.all([
       Api.select('ordenes_trabajo', { select: '*,unidad:unidades(dominio,interno,chasis,marca:marcas(nombre),modelo:modelos(nombre)),cliente:clientes(nombre),' +
-        'solicitante:usuarios!ordenes_trabajo_solicitada_por_fkey(nombre),' +
-        'pausas:pausas_ot(id,motivo,detalle,inicio,fin,pausador:usuarios!pausas_ot_pausada_por_fkey(nombre),reanudador:usuarios!pausas_ot_reanudada_por_fkey(nombre))', id: 'eq.' + id }),
-      Api.select('tareas_ot', { select: 'id,renglon,descripcion,cantidad,horas,horas_total,estado,asignaciones(mecanico_id,asignado_en,terminada_en,usuario:usuarios(nombre))', ot_id: 'eq.' + id, order: 'renglon' }),
-      Api.select('repuestos_ot', { select: 'id,codigo,cantidad,cargado_en,estado,entregado_en,repuesto:repuestos(descripcion),cargador:usuarios!repuestos_ot_cargado_por_fkey(nombre),entregador:usuarios!repuestos_ot_entregado_por_fkey(nombre)', ot_id: 'eq.' + id, order: 'cargado_en' }),
-      Api.select('pedidos_repuesto', { select: 'id,descripcion,codigo,cantidad,estado,nota,detalle,creado_en,resuelto_en,pedidor:usuarios!pedidos_repuesto_pedido_por_fkey(nombre),resolvio:usuarios!pedidos_repuesto_resuelto_por_fkey(nombre)', ot_id: 'eq.' + id, order: 'creado_en' }),
+        'solicitante:usuarios!ordenes_trabajo_solicitada_por_fkey(nombre:nombre_visible),' +
+        'pausas:pausas_ot(id,motivo,detalle,inicio,fin,pausador:usuarios!pausas_ot_pausada_por_fkey(nombre:nombre_visible),reanudador:usuarios!pausas_ot_reanudada_por_fkey(nombre:nombre_visible))', id: 'eq.' + id }),
+      Api.select('tareas_ot', { select: 'id,renglon,descripcion,cantidad,horas,horas_total,estado,asignaciones(mecanico_id,asignado_en,terminada_en,usuario:usuarios(nombre:nombre_visible))', ot_id: 'eq.' + id, order: 'renglon' }),
+      Api.select('repuestos_ot', { select: 'id,codigo,cantidad,cargado_en,estado,entregado_en,repuesto:repuestos(descripcion),cargador:usuarios!repuestos_ot_cargado_por_fkey(nombre:nombre_visible),entregador:usuarios!repuestos_ot_entregado_por_fkey(nombre:nombre_visible)', ot_id: 'eq.' + id, order: 'cargado_en' }),
+      Api.select('pedidos_repuesto', { select: 'id,descripcion,codigo,cantidad,estado,nota,detalle,creado_en,resuelto_en,pedidor:usuarios!pedidos_repuesto_pedido_por_fkey(nombre:nombre_visible),resolvio:usuarios!pedidos_repuesto_resuelto_por_fkey(nombre:nombre_visible)', ot_id: 'eq.' + id, order: 'creado_en' }),
       Api.rpc('registro_ot', { p_ot_id: Number(id) })
     ]);
     const o = ots[0];
     if (!o) { main.innerHTML = '<div class="tarjeta">No se encontró la OT.</div>'; return; }
-    const registros = tareas.length ? await Api.select('registros_tiempo', { select: 'tarea_id,mecanico_id,inicio,fin,usuario:usuarios(nombre)',
+    const registros = tareas.length ? await Api.select('registros_tiempo', { select: 'tarea_id,mecanico_id,inicio,fin,usuario:usuarios(nombre:nombre_visible)',
       tarea_id: 'in.(' + tareas.map(t => t.id).join(',') + ')', order: 'inicio' }) : [];
     const u = o.unidad || {};
     const ingreso = ingresoDe(o), egreso = egresoDe(o);
@@ -246,7 +246,7 @@
     // Trabajo por mecánico
     const porMec = new Map();
     for (const r of registros) {
-      const k = r.mecanico_id;
+      const k = r.usuario ? r.usuario.nombre : r.mecanico_id;
       if (!porMec.has(k)) porMec.set(k, { nombre: r.usuario ? r.usuario.nombre : '—', segs: [], min: 0, tareas: new Set() });
       const m = porMec.get(k);
       const t = tareas.find(x => x.id === r.tarea_id);
@@ -324,7 +324,7 @@
               const fin = (t.asignaciones || []).map(a => a.terminada_en).filter(Boolean).sort().pop();
               const dif = real - temp;
               return `<tr><td>${t.renglon}</td><td>${esc(t.descripcion)}${Number(t.cantidad) !== 1 ? ' × ' + num(t.cantidad) : ''}</td>
-                <td>${esc((t.asignaciones || []).map(a => a.usuario ? a.usuario.nombre : '').join(', ') || 'Sin asignar')}</td>
+                <td>${esc([...new Set((t.asignaciones || []).map(a => a.usuario ? a.usuario.nombre : ''))].join(', ') || 'Sin asignar')}</td>
                 <td class="num">${horas(temp)}</td><td class="num">${real ? horas(real) : '—'}</td>
                 <td class="num">${real ? (dif > 0 ? '+' : dif < 0 ? '−' : '') + horas(Math.abs(dif)) : '—'}</td>
                 <td>${fhc(inicioTarea(t.id)) || '—'}</td><td>${t.estado === 'HECHA' && fin ? fhc(fin) : '—'}</td><td>${chipEstadoTarea(t.estado)}</td></tr>`;
