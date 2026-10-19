@@ -193,7 +193,7 @@
               ${yo && r === 'ADMINISTRADOR' ? 'disabled' : ''} aria-label="${t} para ${esc(u.nombre)}"></label></td>`).join('')}
             <td><label class="check"><input type="checkbox" data-activo="${u.id}" ${u.activo ? 'checked' : ''} ${yo ? 'disabled' : ''} aria-label="Activo"></label></td>
             <td><select data-responsable="${u.id}" aria-label="${esc(u.nombre)} es ayudante de" style="min-width:150px">
-              <option value="">—</option>${usuarios.filter(x => x.id !== u.id && !x.responsable_id).map(x => `<option value="${x.id}" ${x.id === u.responsable_id ? 'selected' : ''}>${esc(x.nombre)}</option>`).join('')}
+              <option value="">—</option>${usuarios.filter(x => x.id !== u.id && !x.responsable_id).map(x => `<option value="${x.id}" ${x.id === u.responsable_id ? 'selected' : ''}>${esc(x.nombre)} · ${esc(usuarioDe(x))}</option>`).join('')}
             </select></td>
             <td style="white-space:nowrap"><button class="btn-texto" data-renombrar="${u.id}">Nombre</button>
               <button class="btn-texto" data-clave="${u.id}">Contraseña</button></td></tr>`;
