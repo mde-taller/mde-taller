@@ -276,6 +276,7 @@ tr.bien td { background: #F1F9F3; }
 .hoja .firmas { display: grid; grid-template-columns: 1fr 1fr; gap: 6mm; margin-top: 3mm; }
 .hoja .caja { border: 1px solid #555; min-height: 26mm; padding: 2mm 3mm; }
 .hoja .linea-firma { border-bottom: 1px solid #555; height: 7mm; margin-bottom: 1.5mm; }
+.hoja .retiro { display: grid; grid-template-columns: 1fr 1fr; gap: 0 4mm; }
 @media screen { .hoja-marco { overflow-x: auto; padding-bottom: 8px; } }
 @media print {
   @page { size: A4 portrait; margin: 0; }

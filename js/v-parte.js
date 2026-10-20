@@ -83,7 +83,7 @@
           <div class="kpi"><div class="kpi-et">Unidades en trabajo ahora</div><div class="kpi-va">${enTrabajo.length}</div>
             <div class="kpi-sub">${plural(Number(datos.mecanicos_trabajando), 'mecánico con el cronómetro en marcha', 'mecánicos con el cronómetro en marcha')}${pausadas.length ? ' · ' + plural(pausadas.length, 'OT pausada', 'OT pausadas') : ''}</div></div>
           <div class="kpi"><div class="kpi-et">Hoy</div><div class="kpi-va">${datos.ingresaron_hoy} <span class="kpi-unidad">${datos.ingresaron_hoy === 1 ? 'ingresó' : 'ingresaron'}</span></div>
-            <div class="kpi-sub">${plural(Number(datos.finalizadas_hoy), 'finalizada', 'finalizadas')} · ${plural(Number(datos.salieron_hoy), 'salió', 'salieron')}</div></div>
+            <div class="kpi-sub">${plural(Number(datos.finalizadas_hoy), 'finalizada', 'finalizadas')}</div></div>
         </section>
 
         <section class="tarjeta">

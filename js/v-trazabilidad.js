@@ -39,7 +39,7 @@
     paginaImpresion('landscape');
     main.innerHTML = `
       <div class="encabezado no-imprimir"><div><h1>Trazabilidad de OT</h1>
-        <div class="sub">Cada OT ingresada en el período: ingreso, egreso, estado, trabajo, tiempos y pausas. Tocá una OT para ver su informe completo.</div></div>
+        <div class="sub">Cada OT ingresada en el período: ingreso, finalización, estado, trabajo, tiempos y pausas. Tocá una OT para ver su informe completo.</div></div>
         <div class="acciones"><button class="btn" data-accion="excel">Descargar Excel</button>
           <button class="btn btn-primario" data-accion="imprimir">Imprimir / PDF</button></div></div>
       <form id="t-filtros" class="fila-campos no-imprimir" style="align-items:end">
@@ -88,14 +88,14 @@
         </div>
         <section class="kpis">
           <div class="kpi"><div class="kpi-et">OT</div><div class="kpi-va">${lista.length}</div><div class="kpi-sub">${terminadas.length} ${terminadas.length === 1 ? 'finalizada o cerrada' : 'finalizadas o cerradas'}</div></div>
-          <div class="kpi"><div class="kpi-et">Promedio en el taller</div><div class="kpi-va">${promedio == null ? '—' : duracionTexto(promedio)}</div><div class="kpi-sub">de las que ya salieron o se finalizaron</div></div>
+          <div class="kpi"><div class="kpi-et">Promedio en el taller</div><div class="kpi-va">${promedio == null ? '—' : duracionTexto(promedio)}</div><div class="kpi-sub">de las que ya se finalizaron</div></div>
           <div class="kpi"><div class="kpi-et">Promedio hasta empezar</div><div class="kpi-va">${promInicio == null ? '—' : duracionTexto(promInicio)}</div><div class="kpi-sub">del ingreso al primer trabajo</div></div>
           <div class="kpi"><div class="kpi-et">Trabajo real</div><div class="kpi-va">${horas(minTrab)}</div><div class="kpi-sub">tempario ${horas(minTemp)}${minTemp ? ' · ' + Math.round(minTrab / minTemp * 100) + '%' : ''}</div></div>
           <div class="kpi"><div class="kpi-et">En pausa</div><div class="kpi-va">${horas(minPausa)}</div>
             <div class="kpi-sub">${Object.entries(motivos).sort((a, b) => b[1] - a[1]).map(([m, v]) => `${esc(m)} ${duracionTexto(v)}`).join(' · ') || 'sin pausas'}</div></div>
         </section>
         <div class="tabla-caja informe-tabla"><table><thead><tr>
-          <th>OT</th><th>Cliente</th><th>Interno</th><th>Patente</th><th>Ingreso</th><th>Egreso</th><th>Estado</th>
+          <th>OT</th><th>Cliente</th><th>Interno</th><th>Patente</th><th>Ingreso</th><th>Finalización</th><th>Estado</th>
           <th class="c-diag">Diagnóstico</th><th class="c-obs">Observaciones</th><th class="num">En taller</th>
           <th class="num">Trabajo / tempario</th><th class="num">Pausas</th><th>Mecánicos</th></tr></thead><tbody>
           ${lista.map(o => {
@@ -116,7 +116,7 @@
           ${lista.length ? `<tfoot><tr><td colspan="9"><b>Totales (${lista.length} OT)</b></td><td></td>
             <td class="num"><b>${horas(minTrab)}</b><div class="nota">de ${horas(minTemp)}</div></td><td class="num"><b>${horas(minPausa)}</b></td><td></td></tr></tfoot>` : ''}
         </table></div>
-        <div class="nota informe-pie">"En taller": del ingreso al egreso (o hasta que se finalizó / hasta ahora si sigue). "Trabajo": tiempo real del cronómetro de los mecánicos. "Pausas": OT pausada por el mecánico, con su motivo.</div>`;
+        <div class="nota informe-pie">"En taller": del ingreso a la finalización (o hasta ahora si sigue). "Trabajo": tiempo real del cronómetro de los mecánicos. "Pausas": OT pausada por el mecánico, con su motivo.</div>`;
       document.getElementById('t-estado').addEventListener('change', ev => { tEstado = ev.target.value; pintar(); });
       document.getElementById('t-cliente').addEventListener('change', ev => { tCliente = ev.target.value; pintar(); });
       const b = document.getElementById('t-buscar');
@@ -131,7 +131,7 @@
       const columnas = [
         { titulo: 'OT', ancho: 11 }, { titulo: 'Cliente', ancho: 20 }, { titulo: 'Interno', ancho: 10 }, { titulo: 'Patente', ancho: 11 },
         { titulo: 'Unidad', ancho: 24 }, { titulo: 'Tipo', ancho: 10 }, { titulo: 'KM', ancho: 10, tipo: 'entero' },
-        { titulo: 'Ingreso', ancho: 16, tipo: 'fechahora' }, { titulo: 'Egreso', ancho: 16, tipo: 'fechahora' }, { titulo: 'Estado', ancho: 16 },
+        { titulo: 'Ingreso', ancho: 16, tipo: 'fechahora' }, { titulo: 'Finalización', ancho: 16, tipo: 'fechahora' }, { titulo: 'Estado', ancho: 16 },
         { titulo: 'Diagnóstico', ancho: 50 }, { titulo: 'Observaciones', ancho: 40 }, { titulo: 'Mecánicos', ancho: 22 },
         { titulo: 'Tareas', ancho: 8, tipo: 'entero' }, { titulo: 'Tareas hechas', ancho: 9, tipo: 'entero' },
         { titulo: 'Horas tempario', ancho: 10, tipo: 'numero' }, { titulo: 'Horas trabajadas', ancho: 10, tipo: 'numero' },
@@ -288,13 +288,13 @@
           <div class="dato"><div class="et">Chasis</div><div class="va">${esc(u.chasis || '—')}</div></div>
           <div class="dato"><div class="et">KM</div><div class="va">${num(o.km, 0)}</div></div>
           <div class="dato"><div class="et">Ingreso</div><div class="va">${ingresoTexto(o)}</div></div>
-          <div class="dato"><div class="et">Egreso</div><div class="va">${egresoTexto(o) || '—'}</div></div>
+          <div class="dato"><div class="et">Finalización</div><div class="va">${egresoTexto(o) || '—'}</div></div>
           ${o.solicitante ? `<div class="dato"><div class="et">Pedida por</div><div class="va">${esc(o.solicitante.nombre)}</div></div>` : ''}
           ${o.ot_cliente ? `<div class="dato"><div class="et">OT del cliente</div><div class="va">${esc(o.ot_cliente)}</div></div>` : ''}
           ${o.nro_factura ? `<div class="dato"><div class="et">N° factura</div><div class="va">${esc(o.nro_factura)}</div></div>` : ''}
         </div>${o.observaciones ? `<div style="margin-top:8px"><span class="nota">Observaciones:</span> ${esc(o.observaciones)}</div>` : ''}</section>
         <section class="kpis">
-          <div class="kpi"><div class="kpi-et">En el taller</div><div class="kpi-va">${duracionTexto(minEntre(ingreso, finTaller))}</div><div class="kpi-sub">${finTaller ? 'del ingreso al ' + (egreso ? 'egreso' : 'cierre') : 'sigue en el taller'}</div></div>
+          <div class="kpi"><div class="kpi-et">En el taller</div><div class="kpi-va">${duracionTexto(minEntre(ingreso, finTaller))}</div><div class="kpi-sub">${finTaller ? 'del ingreso a la finalización' : 'sigue en el taller'}</div></div>
           <div class="kpi"><div class="kpi-et">Hasta empezar</div><div class="kpi-va">${primerTrabajo ? duracionTexto(Math.max(0, minEntre(ingreso, primerTrabajo))) : '—'}</div><div class="kpi-sub">${primerTrabajo ? 'primer trabajo ' + fhc(primerTrabajo) : 'todavía no se trabajó'}</div></div>
           <div class="kpi"><div class="kpi-et">Trabajo real</div><div class="kpi-va">${horas(minTrab)}</div><div class="kpi-sub">tempario ${horas(minTemp)}${minTemp ? ' · ' + Math.round(minTrab / minTemp * 100) + '%' : ''}</div></div>
           <div class="kpi"><div class="kpi-et">En pausa</div><div class="kpi-va">${pausas.length ? duracionTexto(minPausa) : '—'}</div><div class="kpi-sub">${pausas.length} pausa${pausas.length === 1 ? '' : 's'}</div></div>
@@ -304,7 +304,7 @@
 
         <section class="tarjeta"><h2>Línea de tiempo</h2>
           <div class="lt-marco">${lineaDeTiempo({ desde: ltDesde, hasta: ltHasta, etapas: etapas.map(e => Object.assign({}, e, { hasta: e.abierta ? null : e.hasta })), mecanicos, pausas: pausasLT,
-            hitos: [{ t: ingreso, texto: 'Ingreso' }, ...(egreso ? [{ t: egreso, texto: 'Egreso' }] : [])] })}</div>
+            hitos: [{ t: ingreso, texto: 'Ingreso' }, ...(egreso ? [{ t: egreso, texto: 'Finalización' }] : [])] })}</div>
           <div class="lt-leyenda"><span><i class="lt-k trabajo"></i>Trabajo del mecánico (cronómetro)</span><span><i class="lt-k pausa"></i>OT en pausa</span><span><i class="lt-k estado"></i>Estado de la OT</span>
             <span class="nota">En la computadora, pasá el mouse por cada barra para ver horarios y duración.</span></div>
         </section>
@@ -362,7 +362,7 @@
         <section class="tarjeta informe-registro"><h2>Registro completo</h2>
           <div class="tabla-caja"><table><thead><tr><th>Cuándo</th><th>Hasta</th><th>Qué</th><th>Detalle</th><th>Quién</th></tr></thead><tbody>
             ${(registro || []).map(e => `<tr><td style="white-space:nowrap">${fhc(e.momento)}</td><td style="white-space:nowrap">${e.hasta ? fhc(e.hasta) : ''}</td>
-              <td>${esc((e.tipo.charAt(0) + e.tipo.slice(1).toLowerCase()).replace(/^Ot /, 'OT '))}</td><td>${esc(e.detalle || '')}</td><td>${esc(e.usuario || '')}</td></tr>`).join('')}
+              <td>${esc(e.tipo === 'SALIDA' ? 'Finalización' : (e.tipo.charAt(0) + e.tipo.slice(1).toLowerCase()).replace(/^Ot /, 'OT '))}</td><td>${esc(e.detalle || '')}</td><td>${esc(e.usuario || '')}</td></tr>`).join('')}
           </tbody></table></div></section>
         <div class="nota informe-pie">Horarios en hora de Argentina. El tiempo trabajado sale del cronómetro de cada mecánico; las horas de tempario son las que se cobran.</div>
       </div>`;

@@ -531,7 +531,7 @@
   // ---------------- Registro de la OT (solo Administrador) ----------------
   const TIPO_REG = {
     'OT CREADA': ['OT creada', '', 'estados'], 'ESTADO': ['Estado', 'azul', 'estados'], 'INGRESO': ['Fecha de ingreso', '', 'estados'],
-    'SALIDA': ['Salida', '', 'estados'], 'PAUSA': ['Pausa', 'rojo', 'pausas'], 'TRABAJO': ['Trabajó', 'verde', 'trabajo'],
+    'SALIDA': ['Finalización', '', 'estados'], 'PAUSA': ['Pausa', 'rojo', 'pausas'], 'TRABAJO': ['Trabajó', 'verde', 'trabajo'],
     'ASIGNACIÓN': ['Asignada', '', 'trabajo'], 'TAREA TERMINADA': ['Terminó', 'verde', 'trabajo'], 'TAREA SOLICITADA': ['Solicitó tarea', '', 'trabajo'],
     'PIDIÓ TAREA': ['Pidió tarea', '', 'trabajo'], 'REPUESTO CARGADO': ['Repuesto', 'ambar', 'repuestos'],
     'REPUESTO ENTREGADO': ['Entregado', 'ambar', 'repuestos'], 'PEDIDO DE REPUESTO': ['Pedido a Depósito', 'ambar', 'repuestos'] };
@@ -718,8 +718,8 @@
                 <div class="campo"><label for="o-fac">N° factura</label><input id="o-fac" value="${esc(ot.nro_factura || '')}" ${puede ? '' : 'disabled'}></div>
               </div>
               <div class="fila-campos">
-                <div class="campo"><label for="o-fsal">Fecha de salida</label><input id="o-fsal" type="date" value="${esc(ot.fecha_salida || '')}" ${puede ? '' : 'disabled'}></div>
-                <div class="campo"><label for="o-hsal">Hora de salida</label><input id="o-hsal" type="time" value="${esc((ot.hora_salida || '').slice(0, 5))}" ${puede ? '' : 'disabled'}></div>
+                <div class="campo"><label for="o-fsal">Fecha de finalización</label><input id="o-fsal" type="date" value="${esc(ot.fecha_salida || '')}" ${puede ? '' : 'disabled'}></div>
+                <div class="campo"><label for="o-hsal">Hora de finalización</label><input id="o-hsal" type="time" value="${esc((ot.hora_salida || '').slice(0, 5))}" ${puede ? '' : 'disabled'}></div>
               </div>
               <div class="fila-campos">
                 <div class="campo"><label for="o-pres">Presupuesto</label><input id="o-pres" value="${esc(ot.presupuesto || '')}" ${puede ? '' : 'disabled'}></div>
@@ -750,12 +750,8 @@
     document.getElementById('o-estado').addEventListener('change', async ev => {
       const nuevo = ev.target.value;
       try {
-        const cambios = { estado: nuevo };
-        if ((nuevo === 'FINALIZADA' || nuevo === 'CERRADA') && !ot.fecha_salida) {
-          const ok = await confirmar(`¿Poner la fecha de salida de hoy (${fecha(hoyISO())})?`, { titulo: 'Fecha de salida', textoOk: 'Sí', textoCancelar: 'No' });
-          if (ok) { cambios.fecha_salida = hoyISO(); cambios.hora_salida = horaActual(); }
-        }
-        await Api.update('ordenes_trabajo', { id: 'eq.' + id }, cambios);
+        // La fecha y hora de finalización las pone la base al pasar a FINALIZADA.
+        await Api.update('ordenes_trabajo', { id: 'eq.' + id }, { estado: nuevo });
         toast('Estado: ' + nuevo); recargar();
       } catch (e) { toast(errMsg(e), 'error'); ev.target.value = ot.estado; }
     });
@@ -776,7 +772,7 @@
         const fi = v('o-fing');
         if (!fi) return toast('La fecha de ingreso no puede quedar vacía', 'error');
         if (fi > hoyISO()) return toast('La fecha de ingreso no puede ser posterior a hoy', 'error');
-        if (cambios.fecha_salida && cambios.fecha_salida < fi) return toast('La fecha de salida no puede ser anterior a la de ingreso', 'error');
+        if (cambios.fecha_salida && cambios.fecha_salida < fi) return toast('La fecha de finalización no puede ser anterior a la de ingreso', 'error');
         cambios.fecha_ingreso = fi; cambios.hora_ingreso = v('o-hing');
       }
       try {
@@ -918,7 +914,7 @@
         <div class="empresa">${esc(cfg.empresa)}</div>
         <table><tr><th>N° OT</th><td><b>${esc(nroOT(ot.numero))}</b></td><th>Presupuesto</th><td>${esc(ot.presupuesto || '')}</td><th>OT cliente</th><td>${esc(ot.ot_cliente || '')}</td></tr>
           <tr><th>Fecha ingreso</th><td>${fecha(ot.fecha_ingreso)}</td><th>Hora ingreso</th><td>${esc((ot.hora_ingreso || '').slice(0, 5))}</td><th>N° FAC</th><td>${esc(ot.nro_factura || '')}</td></tr>
-          <tr><th>Fecha salida</th><td>${fecha(ot.fecha_salida)}</td><th>Hora salida</th><td>${esc((ot.hora_salida || '').slice(0, 5))}</td><th>Estado</th><td>${esc(ot.estado)}</td></tr></table>
+          <tr><th>Fecha finalización</th><td>${fecha(ot.fecha_salida)}</td><th>Hora finalización</th><td>${esc((ot.hora_salida || '').slice(0, 5))}</td><th>Estado</th><td>${esc(ot.estado)}</td></tr></table>
         <div class="seccion">DATOS DEL VEHÍCULO</div>
         <table><tr><th>Cliente</th><th>Marca</th><th>Modelo</th><th>Dominio</th><th>INT</th><th>Chasis</th><th>KM</th><th>Tipo</th></tr>
           <tr><td>${esc(ot.cliente ? ot.cliente.nombre : '')}</td><td>${esc(u.marca ? u.marca.nombre : '')}</td><td>${esc(u.modelo ? u.modelo.nombre : '')}</td>
@@ -935,7 +931,8 @@
           <div><div class="seccion">CHECK INGRESO · INSPECCIÓN VISUAL</div><div style="font-size:9pt">G: Golpe / R: Rayado / F: Faltante</div><div class="caja"></div></div>
           <div><div class="seccion">ENTREGA</div>
             <div>Firma:</div><div class="linea-firma"></div><div>Aclaración:</div><div class="linea-firma"></div>
-            <div>DNI:</div><div class="linea-firma"></div><div>Fecha de retiro:</div><div class="linea-firma"></div></div>
+            <div>DNI:</div><div class="linea-firma"></div>
+            <div class="retiro"><div><div>Fecha de retiro:</div><div class="linea-firma"></div></div><div><div>Hora de retiro:</div><div class="linea-firma"></div></div></div></div>
         </div>
       </div></div></div>`;
     ajustarHoja();
