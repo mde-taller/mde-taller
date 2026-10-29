@@ -179,7 +179,7 @@
   }
 
   ruta(/^#\/usuarios$/, async main => {
-    const usuarios = await Api.select('usuarios', { select: 'id,nombre,email,activo,responsable_id,numero_mecanico,roles:usuario_roles(rol)', order: 'nombre' }).catch(() =>
+    const usuarios = await Api.select('usuarios', { select: 'id,nombre,email,activo,responsable_id,numero_mecanico,roles:usuario_roles(rol)', eliminado: 'is.false', order: 'nombre' }).catch(() =>
       Api.select('usuarios', { select: 'id,nombre,activo,responsable_id,numero_mecanico,roles:usuario_roles(rol)', order: 'nombre' }));
     main.innerHTML = `
       <div class="encabezado"><div><h1>Usuarios</h1><div class="sub">Marcá los roles de cada persona. Un usuario puede tener más de un rol.</div></div>
@@ -199,10 +199,11 @@
               <option value="">—</option>${usuarios.filter(x => x.id !== u.id && !x.responsable_id).map(x => `<option value="${x.id}" ${x.id === u.responsable_id ? 'selected' : ''}>${esc(x.nombre)} · ${esc(usuarioDe(x))}</option>`).join('')}
             </select></td>
             <td style="white-space:nowrap"><button class="btn-texto" data-renombrar="${u.id}">Nombre</button>
-              <button class="btn-texto" data-clave="${u.id}">Contraseña</button></td></tr>`;
+              <button class="btn-texto" data-clave="${u.id}">Contraseña</button>
+              ${yo ? '' : `<button class="btn-texto" data-eliminar="${u.id}" style="color:var(--rojo)">Eliminar</button>`}</td></tr>`;
         }).join('') || '<tr><td colspan="10" class="vacio">Sin usuarios.</td></tr>'}
       </tbody></table></div>
-      <div class="nota" style="margin-top:8px">Un usuario sin roles no puede entrar. Desactivar a alguien le quita el acceso sin borrar su historial.</div>
+      <div class="nota" style="margin-top:8px">Un usuario sin roles no puede entrar. Desactivar a alguien le quita el acceso por un tiempo. <b>Eliminar</b> lo borra para siempre; lo que hizo en las OT queda guardado con su nombre.</div>
       <div class="nota" style="margin-top:4px"><b>Ayudante de:</b> lo que hace un ayudante figura a nombre de su responsable en todas las pantallas, avisos e informes. Solo vos, en el registro de cada OT, ves que lo hizo el ayudante.</div>
       <div class="nota" style="margin-top:4px"><b>N° mecánico:</b> aparece en cada tarea de la OT (pantalla, hoja impresa y app del mecánico). No se puede repetir. Se habilita al marcar el rol Mecánico. El ayudante usa el número de su responsable.</div>`;
 
@@ -241,6 +242,14 @@
       const v = await modal({ titulo: 'Cambiar nombre', textoOk: 'Guardar', campos: [{ id: 'n', label: 'Nombre y apellido', valor: u.nombre, obligatorio: true }] });
       if (!v) return;
       try { await Api.update('usuarios', { id: 'eq.' + u.id }, { nombre: v.n.trim() }); toast('Nombre actualizado'); navegar(); }
+      catch (e) { toast(errMsg(e), 'error'); }
+    });
+    on(main, 'click', '[data-eliminar]', async (ev, b) => {
+      const u = usuarios.find(x => x.id === b.dataset.eliminar);
+      const ok = await confirmar(`¿Eliminar a ${u.nombre}? Ya no va a poder entrar y desaparece de la lista. Lo que hizo en las OT queda guardado con su nombre. No se puede deshacer.`,
+        { titulo: 'Eliminar usuario', textoOk: 'Eliminar' });
+      if (!ok) return;
+      try { await Api.rpc('eliminar_usuario', { p_id: u.id }); toast('Usuario eliminado: ' + u.nombre); navegar(); }
       catch (e) { toast(errMsg(e), 'error'); }
     });
     on(main, 'click', '[data-clave]', async (ev, b) => {
