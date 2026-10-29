@@ -706,6 +706,7 @@
               <div class="dato"><div class="et">Chasis</div><div class="va">${esc(u.chasis || '—')}</div></div>
               <div class="dato"><div class="et">Marca y modelo</div><div class="va">${esc([u.marca && u.marca.nombre, u.modelo && u.modelo.nombre].filter(Boolean).join(' ') || '—')}</div></div>
               ${puede && esAdmin() ? '' : `<div class="dato"><div class="et">Ingreso</div><div class="va">${fecha(ot.fecha_ingreso)}${ot.hora_ingreso ? ' ' + esc(ot.hora_ingreso.slice(0, 5)) : ''}</div></div>`}
+              <div class="dato"><div class="et">Iniciación</div><div class="va">${ot.fecha_inicio ? fecha(ot.fecha_inicio) + (ot.hora_inicio ? ' ' + esc(ot.hora_inicio.slice(0, 5)) : '') : '<span class="nota">Todavía no arrancó</span>'}</div></div>
               ${ot.solicitante ? `<div class="dato"><div class="et">Pedida por</div><div class="va">${esc(ot.solicitante.nombre)}</div></div>` : ''}
             </div>
             <form id="f-datos">
@@ -917,7 +918,8 @@
         <div class="empresa">${esc(cfg.empresa)}</div>
         <table><tr><th>N° OT</th><td><b>${esc(nroOT(ot.numero))}</b></td><th>Presupuesto</th><td>${esc(ot.presupuesto || '')}</td><th>OT cliente</th><td>${esc(ot.ot_cliente || '')}</td></tr>
           <tr><th>Fecha ingreso</th><td>${fecha(ot.fecha_ingreso)}</td><th>Hora ingreso</th><td>${esc((ot.hora_ingreso || '').slice(0, 5))}</td><th>N° FAC</th><td>${esc(ot.nro_factura || '')}</td></tr>
-          <tr><th>Fecha finalización</th><td>${fecha(ot.fecha_salida)}</td><th>Hora finalización</th><td>${esc((ot.hora_salida || '').slice(0, 5))}</td><th>Estado</th><td>${esc(ot.estado)}</td></tr></table>
+          <tr><th>Fecha iniciación</th><td>${fecha(ot.fecha_inicio)}</td><th>Hora iniciación</th><td>${esc((ot.hora_inicio || '').slice(0, 5))}</td><th>Estado</th><td>${esc(ot.estado)}</td></tr>
+          <tr><th>Fecha finalización</th><td>${fecha(ot.fecha_salida)}</td><th>Hora finalización</th><td>${esc((ot.hora_salida || '').slice(0, 5))}</td><td colspan="2"></td></tr></table>
         <div class="seccion">DATOS DEL VEHÍCULO</div>
         <table><tr><th>Cliente</th><th>Marca</th><th>Modelo</th><th>Dominio</th><th>INT</th><th>Chasis</th><th>KM</th><th>Tipo</th></tr>
           <tr><td>${esc(ot.cliente ? ot.cliente.nombre : '')}</td><td>${esc(u.marca ? u.marca.nombre : '')}</td><td>${esc(u.modelo ? u.modelo.nombre : '')}</td>
