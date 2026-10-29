@@ -1,6 +1,6 @@
 // MDE · Taller — pantallas de oficina: órdenes de trabajo, solicitudes e impresión.
 (() => {
-  const { st, cfg, esc, num, parseNum, nroOT, fecha, fechaHora, hoyISO, horaActual, esAdmin, esOficina,
+  const { st, cfg, esc, num, parseNum, nroOT, conNumero, fecha, fechaHora, hoyISO, horaActual, esAdmin, esOficina,
           chipEstadoOT, chipEstadoTarea, errMsg, toast, modal, confirmar, ICONOS, ESTADOS_OT, TIPOS,
           textoMotivo, pausaAbierta, chipPausa, autocompletarRepuesto, autocompletarUnidad, unidadExacta,
           decidirFaltante, pedirADeposito, esFaltaDeStock, esTareaButaca, resumenButacas, duracionTexto, ruta, ir, on, navegar } = App;
@@ -17,10 +17,10 @@
   const buscarEnTempario = (lista, texto) => lista.find(y => claveTarea(y) === texto)
     || lista.filter(y => y.tarea.toUpperCase() === texto.toUpperCase()).find((y, i, arr) => arr.length === 1);
   async function mecanicos() {
-    const filas = await Api.select('usuario_roles', { select: 'usuario_id,usuario:usuarios(nombre,activo,responsable_id,responsable:nombre_visible)', rol: 'eq.MECANICO' });
+    const filas = await Api.select('usuario_roles', { select: 'usuario_id,usuario:usuarios(nombre,activo,responsable_id,responsable:nombre_visible,numero:numero_visible)', rol: 'eq.MECANICO' });
     return filas.filter(f => f.usuario && f.usuario.activo)
-      .map(f => ({ id: f.usuario_id, nombre: f.usuario.responsable_id ? `${f.usuario.nombre} (ayudante de ${f.usuario.responsable})` : f.usuario.nombre }))
-      .sort((a, b) => a.nombre.localeCompare(b.nombre));
+      .map(f => ({ id: f.usuario_id, numero: f.usuario.numero, nombre: conNumero({ numero: f.usuario.numero, nombre: f.usuario.responsable_id ? `${f.usuario.nombre} (ayudante de ${f.usuario.responsable})` : f.usuario.nombre }) }))
+      .sort((a, b) => (a.numero || 9999) - (b.numero || 9999) || a.nombre.localeCompare(b.nombre));
   }
   const hora = d => d ? new Date(d).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
 
@@ -577,7 +577,7 @@
                                               'solicitante:usuarios!ordenes_trabajo_solicitada_por_fkey(nombre:nombre_visible),' +
                                               'pausas:pausas_ot(id,motivo,detalle,inicio,fin,pausador:usuarios!pausas_ot_pausada_por_fkey(nombre:nombre_visible),reanudador:usuarios!pausas_ot_reanudada_por_fkey(nombre:nombre_visible))',
                                       id: 'eq.' + id }),
-      Api.select('tareas_ot', { select: 'id,renglon,descripcion,horas,cantidad,horas_total,estado,tempario(categoria:categorias_tempario(nombre)),asignaciones(mecanico_id,terminada_en,usuario:usuarios(nombre:nombre_visible,responsable_id))',
+      Api.select('tareas_ot', { select: 'id,renglon,descripcion,horas,cantidad,horas_total,estado,tempario(categoria:categorias_tempario(nombre)),asignaciones(mecanico_id,terminada_en,usuario:usuarios(nombre:nombre_visible,responsable_id,numero:numero_visible))',
                                 ot_id: 'eq.' + id, order: 'renglon' }),
       Api.select('repuestos_ot', { select: 'id,codigo,cantidad,tarea_id,cargado_en,estado,entregado_en,repuesto:repuestos(descripcion),cargador:usuarios!repuestos_ot_cargado_por_fkey(nombre:nombre_visible),entregador:usuarios!repuestos_ot_entregado_por_fkey(nombre:nombre_visible)',
                                    ot_id: 'eq.' + id, order: 'id' })
@@ -650,7 +650,7 @@
                   ${t.butacas.length ? `<div class="nota">Butacas: ${esc(resumenButacas(t.butacas))}</div>` : ''}
                   ${puede && (t.butacas.length || esTareaButaca(t.descripcion)) && !['CERRADA', 'PRUEBA'].includes(ot.estado) ? `<a href="#/butacas/${t.id}" class="nota">${t.butacas.length ? 'Cambiar butacas' : 'Marcar butacas en el plano'}</a>` : ''}</td>
                 <td class="num">${num(t.cantidad)}</td><td class="num">${num(t.horas)}</td><td class="num"><b>${num(t.horas_total)}</b></td>
-                <td>${asig.map(a => `<span class="chip" style="margin:2px">${esc(a.usuario ? a.usuario.nombre : '')}${a.usuario && a.usuario.responsable_id ? ' (ayudante)' : ''}${a.terminada_en ? ' ✓' : ''}${puede ? `<button class="chip-x" data-desasignar="${t.id}" data-mec="${a.mecanico_id}" aria-label="Quitar a ${esc(a.usuario ? a.usuario.nombre : '')}">×</button>` : ''}</span>`).join('')}
+                <td>${asig.map(a => `<span class="chip" style="margin:2px">${esc(conNumero(a.usuario))}${a.usuario && a.usuario.responsable_id ? ' (ayudante)' : ''}${a.terminada_en ? ' ✓' : ''}${puede ? `<button class="chip-x" data-desasignar="${t.id}" data-mec="${a.mecanico_id}" aria-label="Quitar a ${esc(a.usuario ? a.usuario.nombre : '')}">×</button>` : ''}</span>`).join('')}
                   ${puede && asig.length < 2 && libres.length ? `<select data-asignar="${t.id}" aria-label="Asignar mecánico" style="width:auto;min-height:36px;margin-top:4px">
                     <option value="">${asig.length ? '+ segundo mecánico' : 'Asignar…'}</option>${libres.map(m => `<option value="${m.id}">${esc(m.nombre)}</option>`).join('')}</select>` : ''}
                   ${!asig.length && !puede ? '<span class="nota">Sin asignar</span>' : ''}
@@ -895,6 +895,9 @@
     cont.style.zoom = String(Math.floor(bajo * 1000) / 1000);
   }
 
+  // Números de los mecánicos de una tarea ("3 / 5"); si alguno no tiene número, va su nombre.
+  const nrosMecanicos = t => [...new Set((t.asignaciones || []).map(a => a.usuario ? (a.usuario.numero ? String(a.usuario.numero) : a.usuario.nombre) : '').filter(Boolean))].join(' / ');
+
   ruta(/^#\/imprimir\/(\d+)$/, async (main, id) => {
     const { ot, tareas, reps } = await cargarOT(id);
     if (!ot) { main.innerHTML = '<div class="tarjeta">No se encontró la OT.</div>'; return; }
@@ -920,9 +923,9 @@
           <tr><td>${esc(ot.cliente ? ot.cliente.nombre : '')}</td><td>${esc(u.marca ? u.marca.nombre : '')}</td><td>${esc(u.modelo ? u.modelo.nombre : '')}</td>
           <td>${esc(u.dominio)}</td><td>${esc(u.interno || '')}</td><td>${esc(u.chasis || '')}</td><td>${num(ot.km, 0)}</td><td>${esc(ot.tipo)}</td></tr></table>
         <div class="seccion">TRABAJO Y SERVICIO</div>
-        <table><tr><th style="width:6%">#</th><th>Descripción</th><th style="width:10%">CANT.</th><th style="width:12%">HS</th></tr>
-          ${tareas.map(t => `<tr><td>${t.renglon}</td><td>${esc(t.descripcion)}${t.butacas.length ? `<div style="font-size:.85em">Butacas: ${esc(resumenButacas(t.butacas))}</div>` : ''}</td><td style="text-align:right">${num(t.cantidad)}</td><td style="text-align:right">${num(t.horas_total)}</td></tr>`).join('') || '<tr><td colspan="4">—</td></tr>'}
-          <tr><th colspan="3" style="text-align:right">TOTAL HS</th><th style="text-align:right">${num(total)}</th></tr></table>
+        <table><tr><th style="width:6%">#</th><th>Descripción</th><th style="width:11%">MECÁNICO N°</th><th style="width:10%">CANT.</th><th style="width:12%">HS</th></tr>
+          ${tareas.map(t => `<tr><td>${t.renglon}</td><td>${esc(t.descripcion)}${t.butacas.length ? `<div style="font-size:.85em">Butacas: ${esc(resumenButacas(t.butacas))}</div>` : ''}</td><td style="text-align:center">${esc(nrosMecanicos(t))}</td><td style="text-align:right">${num(t.cantidad)}</td><td style="text-align:right">${num(t.horas_total)}</td></tr>`).join('') || '<tr><td colspan="5">—</td></tr>'}
+          <tr><th colspan="4" style="text-align:right">TOTAL HS</th><th style="text-align:right">${num(total)}</th></tr></table>
         <div class="seccion">REPUESTOS</div>
         <table><tr><th style="width:24%">Código</th><th>Repuesto</th><th style="width:12%">Cantidad</th></tr>
           ${reps.map(r => `<tr><td>${esc(r.codigo)}</td><td>${esc(r.repuesto ? r.repuesto.descripcion : '')}</td><td style="text-align:right">${num(r.cantidad)}</td></tr>`).join('') || '<tr><td colspan="3">—</td></tr>'}</table>

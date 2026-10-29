@@ -179,16 +179,19 @@
   }
 
   ruta(/^#\/usuarios$/, async main => {
-    const usuarios = await Api.select('usuarios', { select: 'id,nombre,email,activo,responsable_id,roles:usuario_roles(rol)', order: 'nombre' }).catch(() =>
-      Api.select('usuarios', { select: 'id,nombre,activo,responsable_id,roles:usuario_roles(rol)', order: 'nombre' }));
+    const usuarios = await Api.select('usuarios', { select: 'id,nombre,email,activo,responsable_id,numero_mecanico,roles:usuario_roles(rol)', order: 'nombre' }).catch(() =>
+      Api.select('usuarios', { select: 'id,nombre,activo,responsable_id,numero_mecanico,roles:usuario_roles(rol)', order: 'nombre' }));
     main.innerHTML = `
       <div class="encabezado"><div><h1>Usuarios</h1><div class="sub">Marcá los roles de cada persona. Un usuario puede tener más de un rol.</div></div>
         <div class="acciones"><button class="btn btn-primario" data-accion="nuevo">Nuevo usuario</button></div></div>
-      <div class="tabla-caja"><table><thead><tr><th>Nombre</th><th>Usuario</th>${ROLES.map(([, t]) => `<th>${t}</th>`).join('')}<th>Activo</th><th>Ayudante de</th><th></th></tr></thead><tbody>
+      <div class="tabla-caja"><table><thead><tr><th>Nombre</th><th>Usuario</th><th>N° mecánico</th>${ROLES.map(([, t]) => `<th>${t}</th>`).join('')}<th>Activo</th><th>Ayudante de</th><th></th></tr></thead><tbody>
         ${usuarios.map(u => {
           const roles = (u.roles || []).map(r => r.rol);
           const yo = u.id === st.usuarioId;
           return `<tr><td><b>${esc(u.nombre)}</b>${yo ? ' <span class="nota">(vos)</span>' : ''}</td><td>${esc(usuarioDe(u))}</td>
+            <td>${u.responsable_id ? `<span class="nota">El de su responsable${(() => { const r = usuarios.find(x => x.id === u.responsable_id); return r && r.numero_mecanico ? ' (N° ' + r.numero_mecanico + ')' : ''; })()}</span>`
+              : roles.includes('MECANICO') ? `<input data-numero="${u.id}" value="${u.numero_mecanico || ''}" inputmode="numeric" style="max-width:70px;text-align:right" aria-label="Número de mecánico de ${esc(u.nombre)}">`
+              : '<span class="nota">—</span>'}</td>
             ${ROLES.map(([r, t]) => `<td><label class="check"><input type="checkbox" data-u="${u.id}" data-rol="${r}" ${roles.includes(r) ? 'checked' : ''}
               ${yo && r === 'ADMINISTRADOR' ? 'disabled' : ''} aria-label="${t} para ${esc(u.nombre)}"></label></td>`).join('')}
             <td><label class="check"><input type="checkbox" data-activo="${u.id}" ${u.activo ? 'checked' : ''} ${yo ? 'disabled' : ''} aria-label="Activo"></label></td>
@@ -197,17 +200,31 @@
             </select></td>
             <td style="white-space:nowrap"><button class="btn-texto" data-renombrar="${u.id}">Nombre</button>
               <button class="btn-texto" data-clave="${u.id}">Contraseña</button></td></tr>`;
-        }).join('') || '<tr><td colspan="9" class="vacio">Sin usuarios.</td></tr>'}
+        }).join('') || '<tr><td colspan="10" class="vacio">Sin usuarios.</td></tr>'}
       </tbody></table></div>
       <div class="nota" style="margin-top:8px">Un usuario sin roles no puede entrar. Desactivar a alguien le quita el acceso sin borrar su historial.</div>
-      <div class="nota" style="margin-top:4px"><b>Ayudante de:</b> lo que hace un ayudante figura a nombre de su responsable en todas las pantallas, avisos e informes. Solo vos, en el registro de cada OT, ves que lo hizo el ayudante.</div>`;
+      <div class="nota" style="margin-top:4px"><b>Ayudante de:</b> lo que hace un ayudante figura a nombre de su responsable en todas las pantallas, avisos e informes. Solo vos, en el registro de cada OT, ves que lo hizo el ayudante.</div>
+      <div class="nota" style="margin-top:4px"><b>N° mecánico:</b> aparece en cada tarea de la OT (pantalla, hoja impresa y app del mecánico). No se puede repetir. Se habilita al marcar el rol Mecánico. El ayudante usa el número de su responsable.</div>`;
 
     on(main, 'change', '[data-rol]', async (ev, cb) => {
       try {
         if (cb.checked) await Api.insert('usuario_roles', { usuario_id: cb.dataset.u, rol: cb.dataset.rol });
         else await Api.remove('usuario_roles', { usuario_id: 'eq.' + cb.dataset.u, rol: 'eq.' + cb.dataset.rol });
         toast('Roles actualizados');
+        if (cb.dataset.rol === 'MECANICO') navegar();
       } catch (e) { toast(errMsg(e), 'error'); cb.checked = !cb.checked; }
+    });
+    on(main, 'change', '[data-numero]', async (ev, inp) => {
+      const u = usuarios.find(x => x.id === inp.dataset.numero);
+      const txt = inp.value.trim();
+      const n = txt === '' ? null : Number(txt);
+      if (n !== null && !(Number.isInteger(n) && n > 0)) { toast('El número tiene que ser un entero mayor a cero', 'error'); inp.value = u.numero_mecanico || ''; return; }
+      const otro = n !== null && usuarios.find(x => x.id !== u.id && x.numero_mecanico === n);
+      if (otro) { toast(`El N° ${n} ya lo tiene ${otro.nombre}`, 'error'); inp.value = u.numero_mecanico || ''; return; }
+      try {
+        await Api.update('usuarios', { id: 'eq.' + u.id }, { numero_mecanico: n });
+        u.numero_mecanico = n; toast(n ? `${u.nombre}: mecánico N° ${n}` : `${u.nombre}: sin número`);
+      } catch (e) { toast(errMsg(e), 'error'); inp.value = u.numero_mecanico || ''; }
     });
     on(main, 'change', '[data-responsable]', async (ev, sel) => {
       try {

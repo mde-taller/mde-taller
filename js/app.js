@@ -18,6 +18,8 @@ window.App = (() => {
     return Number(s);
   };
   const nroOT = n => n == null ? '' : st.prefijo + String(n).padStart(6, '0');
+  // Nombre del mecánico con su número adelante: "N° 3 · JUAN PÉREZ" (sin número, solo el nombre).
+  const conNumero = u => !u ? '' : (u.numero ? `N° ${u.numero} · ` : '') + (u.nombre || '');
   const fecha = d => {
     if (!d) return '';
     const x = d.length === 10 ? new Date(d + 'T00:00:00') : new Date(d);
@@ -600,7 +602,7 @@ window.App = (() => {
   }
 
   return {
-    st, cfg, esc, num, parseNum, nroOT, fecha, fechaHora, hoyISO, horaActual, duracion, duracionTexto, tiene, esAdmin, esOficina,
+    st, cfg, esc, num, parseNum, nroOT, conNumero, fecha, fechaHora, hoyISO, horaActual, duracion, duracionTexto, tiene, esAdmin, esOficina,
     veTodas, limpiarCodigo, chipEstadoOT, chipEstadoTarea, errMsg, toast, modal, confirmar, ICONOS, ESTADOS_OT,
     TIPOS, ROLES, MOTIVOS, textoMotivo, pausaAbierta, chipPausa, autocompletarRepuesto,
     autocompletarUnidad, unidadExacta, decidirFaltante, pedirADeposito, esFaltaDeStock,

@@ -1,6 +1,6 @@
 // MDE · Taller — pantallas del mecánico (celular).
 (() => {
-  const { st, esc, num, parseNum, nroOT, fecha, fechaHora, duracion, chipEstadoOT, chipEstadoTarea, errMsg, toast, modal, confirmar,
+  const { st, esc, num, parseNum, nroOT, conNumero, fecha, fechaHora, duracion, chipEstadoOT, chipEstadoTarea, errMsg, toast, modal, confirmar,
           ICONOS, MOTIVOS, textoMotivo, pausaAbierta, chipPausa, autocompletarRepuesto, autocompletarUnidad, unidadExacta,
           decidirFaltante, pedirADeposito, esFaltaDeStock, esTareaButaca, nombreButaca, ordenButaca, textoTrabajos,
           TIPOS, ruta, ir, on, navegar } = App;
@@ -16,7 +16,7 @@
       Api.select('asignaciones', {
         select: 'terminada_en,tarea:tareas_ot(id,descripcion,horas,cantidad,horas_total,estado,renglon,' +
                 'ot:ordenes_trabajo(id,numero,estado,tipo,unidad:unidades(dominio,interno),cliente:clientes(nombre),pausas:pausas_ot(motivo,fin)),' +
-                'companeros:asignaciones(mecanico_id,usuario:usuarios(nombre:nombre_visible)))',
+                'companeros:asignaciones(mecanico_id,usuario:usuarios(nombre:nombre_visible,numero:numero_visible)))',
         mecanico_id: 'eq.' + st.usuarioId
       }),
       Api.select('registros_tiempo', { select: 'tarea_id,inicio', mecanico_id: 'eq.' + st.usuarioId, fin: 'is.null' })
@@ -45,7 +45,7 @@
       </div>
       <div class="lista-tareas">
         ${lista.length ? lista.map(({ t, grupo }) => {
-          const otros = [...new Set((t.companeros || []).filter(c => c.mecanico_id !== st.usuarioId).map(c => c.usuario && c.usuario.nombre).filter(n => n && n !== st.nombre))];
+          const otros = [...new Set((t.companeros || []).filter(c => c.mecanico_id !== st.usuarioId).filter(c => c.usuario && c.usuario.nombre && c.usuario.nombre !== st.nombre).map(c => conNumero(c.usuario)))];
           const pausa = grupo !== 'hechas' ? pausaAbierta(t.ot) : null;
           const estado = pausa ? chipPausa(pausa) : grupo === 'curso' ? '<span class="chip azul">En curso</span>' : chipEstadoTarea(grupo === 'hechas' ? 'HECHA' : t.estado);
           return `<a class="tarea-card ${grupo === 'curso' ? 'en-curso' : ''}" href="#/tarea/${t.id}">
@@ -135,7 +135,7 @@
         select: 'id,descripcion,horas,cantidad,horas_total,estado,ot_id,tempario(categoria:categorias_tempario(nombre)),' +
                 'ot:ordenes_trabajo(id,numero,estado,tipo,km,observaciones,unidad:unidades(dominio,interno,chasis,marca:marcas(nombre),modelo:modelos(nombre)),cliente:clientes(nombre),' +
                 'pausas:pausas_ot(id,motivo,detalle,inicio,fin,pausador:usuarios!pausas_ot_pausada_por_fkey(nombre:nombre_visible))),' +
-                'asignaciones(mecanico_id,terminada_en,usuario:usuarios(nombre:nombre_visible))',
+                'asignaciones(mecanico_id,terminada_en,usuario:usuarios(nombre:nombre_visible,numero:numero_visible))',
         id: 'eq.' + id
       }),
       Api.select('registros_tiempo', { select: 'inicio,fin', tarea_id: 'eq.' + id, mecanico_id: 'eq.' + st.usuarioId, order: 'inicio' }),
@@ -187,7 +187,7 @@
           <div class="dato"><div class="et">KM</div><div class="va">${num(ot.km, 0)}</div></div>
           <div class="dato"><div class="et">Tempario</div><div class="va">${horasTexto(t)}</div></div>
           <div class="dato"><div class="et">Unidad</div><div class="va">${esc([u.marca && u.marca.nombre, u.modelo && u.modelo.nombre].filter(Boolean).join(' ') || ot.tipo)}</div></div>
-          ${otros.length ? `<div class="dato"><div class="et">Compañero</div><div class="va">${esc(otros.map(o => o.usuario && o.usuario.nombre).join(', '))}</div></div>` : ''}
+          ${otros.length ? `<div class="dato"><div class="et">Compañero</div><div class="va">${esc(otros.map(o => conNumero(o.usuario)).join(', '))}</div></div>` : ''}
         </div>
         ${ot.observaciones ? `<div class="sub" style="margin-top:10px">Obs.: ${esc(ot.observaciones)}</div>` : ''}
       </div>

@@ -1,6 +1,6 @@
 // MDE · Taller — Informes de trazabilidad (solo Administrador): del período y por OT.
 (() => {
-  const { st, esc, num, nroOT, hoyISO, chipEstadoOT, chipEstadoTarea, textoMotivo, duracionTexto, errMsg, toast,
+  const { st, esc, num, nroOT, conNumero, hoyISO, chipEstadoOT, chipEstadoTarea, textoMotivo, duracionTexto, errMsg, toast,
           ESTADOS_OT, ICONOS, ruta, on, navegar } = App;
 
   // ---------------- Utilidades ----------------
@@ -213,7 +213,7 @@
       Api.select('ordenes_trabajo', { select: '*,unidad:unidades(dominio,interno,chasis,marca:marcas(nombre),modelo:modelos(nombre)),cliente:clientes(nombre),' +
         'solicitante:usuarios!ordenes_trabajo_solicitada_por_fkey(nombre:nombre_visible),' +
         'pausas:pausas_ot(id,motivo,detalle,inicio,fin,pausador:usuarios!pausas_ot_pausada_por_fkey(nombre:nombre_visible),reanudador:usuarios!pausas_ot_reanudada_por_fkey(nombre:nombre_visible))', id: 'eq.' + id }),
-      Api.select('tareas_ot', { select: 'id,renglon,descripcion,cantidad,horas,horas_total,estado,asignaciones(mecanico_id,asignado_en,terminada_en,usuario:usuarios(nombre:nombre_visible))', ot_id: 'eq.' + id, order: 'renglon' }),
+      Api.select('tareas_ot', { select: 'id,renglon,descripcion,cantidad,horas,horas_total,estado,asignaciones(mecanico_id,asignado_en,terminada_en,usuario:usuarios(nombre:nombre_visible,numero:numero_visible))', ot_id: 'eq.' + id, order: 'renglon' }),
       Api.select('repuestos_ot', { select: 'id,codigo,cantidad,cargado_en,estado,entregado_en,repuesto:repuestos(descripcion),cargador:usuarios!repuestos_ot_cargado_por_fkey(nombre:nombre_visible),entregador:usuarios!repuestos_ot_entregado_por_fkey(nombre:nombre_visible)', ot_id: 'eq.' + id, order: 'cargado_en' }),
       Api.select('pedidos_repuesto', { select: 'id,descripcion,codigo,cantidad,estado,nota,detalle,creado_en,resuelto_en,pedidor:usuarios!pedidos_repuesto_pedido_por_fkey(nombre:nombre_visible),resolvio:usuarios!pedidos_repuesto_resuelto_por_fkey(nombre:nombre_visible)', ot_id: 'eq.' + id, order: 'creado_en' }),
       Api.rpc('registro_ot', { p_ot_id: Number(id) })
@@ -324,7 +324,7 @@
               const fin = (t.asignaciones || []).map(a => a.terminada_en).filter(Boolean).sort().pop();
               const dif = real - temp;
               return `<tr><td>${t.renglon}</td><td>${esc(t.descripcion)}${Number(t.cantidad) !== 1 ? ' × ' + num(t.cantidad) : ''}</td>
-                <td>${esc([...new Set((t.asignaciones || []).map(a => a.usuario ? a.usuario.nombre : ''))].join(', ') || 'Sin asignar')}</td>
+                <td>${esc([...new Set((t.asignaciones || []).map(a => conNumero(a.usuario)))].filter(Boolean).join(', ') || 'Sin asignar')}</td>
                 <td class="num">${horas(temp)}</td><td class="num">${real ? horas(real) : '—'}</td>
                 <td class="num">${real ? (dif > 0 ? '+' : dif < 0 ? '−' : '') + horas(Math.abs(dif)) : '—'}</td>
                 <td>${fhc(inicioTarea(t.id)) || '—'}</td><td>${t.estado === 'HECHA' && fin ? fhc(fin) : '—'}</td><td>${chipEstadoTarea(t.estado)}</td></tr>`;
