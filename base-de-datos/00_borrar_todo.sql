@@ -40,7 +40,7 @@ begin
         'buscar_repuestos','avisar_repuesto_pendiente','entregar_repuestos','pedir_repuesto',
         'guardar_butacas','texto_trabajos_butaca','ot_taller_json','ots_taller','ot_taller','pedir_tarea',
         'resolver_pedido_tarea','aprobar_pedido_al_asignar','registrar_cambio_ot','registro_ot','reporte_pausas',
-        'informe_trazabilidad','parte_diario','nombre_visible','id_visible','nombre_visible_de','id_visible_de','nombre_registro','ot_fecha_finalizacion','numero_visible','ot_fecha_iniciacion','eliminar_usuario','tarea_iniciar_de','tarea_pausar_de','tarea_terminar_de','tarea_oficina','cronometros_ot','chat_puede','chat_conversaciones','chat_leer','chat_enviar','chat_sin_leer','eliminar_repuesto','repuesto_no_eliminado')
+        'informe_trazabilidad','parte_diario','nombre_visible','id_visible','nombre_visible_de','id_visible_de','nombre_registro','ot_fecha_finalizacion','numero_visible','ot_fecha_iniciacion','eliminar_usuario','tarea_iniciar_de','tarea_pausar_de','tarea_terminar_de','tarea_oficina','cronometros_ot','chat_puede','chat_conversaciones','chat_leer','chat_enviar','chat_sin_leer','eliminar_repuesto','repuesto_no_eliminado','modificar_pedido_repuesto','entregar_pedido_repuesto','cancelar_pedido_repuesto')
   loop
     execute format('drop function if exists %s cascade', f.firma);
   end loop;
