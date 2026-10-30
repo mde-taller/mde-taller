@@ -14,7 +14,7 @@ drop view if exists public.horas_reales;
 drop view if exists public.stock_disponible;
 
 drop table if exists
-  public.historial_ot, public.pedidos_tarea, public.butacas_tarea, public.pedidos_repuesto, public.pausas_ot, public.solicitudes_de_ot,
+  public.chat_leido, public.chat_mensajes, public.historial_ot, public.pedidos_tarea, public.butacas_tarea, public.pedidos_repuesto, public.pausas_ot, public.solicitudes_de_ot,
   public.avisos, public.solicitudes, public.registros_tiempo, public.movimientos_stock,
   public.repuestos_ot, public.asignaciones, public.tareas_ot, public.ordenes_trabajo,
   public.repuestos, public.tempario, public.categorias_tempario, public.unidades,
@@ -40,7 +40,7 @@ begin
         'buscar_repuestos','avisar_repuesto_pendiente','entregar_repuestos','pedir_repuesto',
         'guardar_butacas','texto_trabajos_butaca','ot_taller_json','ots_taller','ot_taller','pedir_tarea',
         'resolver_pedido_tarea','aprobar_pedido_al_asignar','registrar_cambio_ot','registro_ot','reporte_pausas',
-        'informe_trazabilidad','parte_diario','nombre_visible','id_visible','nombre_visible_de','id_visible_de','nombre_registro','ot_fecha_finalizacion','numero_visible','ot_fecha_iniciacion','eliminar_usuario','tarea_iniciar_de','tarea_pausar_de','tarea_terminar_de','tarea_oficina','cronometros_ot')
+        'informe_trazabilidad','parte_diario','nombre_visible','id_visible','nombre_visible_de','id_visible_de','nombre_registro','ot_fecha_finalizacion','numero_visible','ot_fecha_iniciacion','eliminar_usuario','tarea_iniciar_de','tarea_pausar_de','tarea_terminar_de','tarea_oficina','cronometros_ot','chat_puede','chat_conversaciones','chat_leer','chat_enviar','chat_sin_leer')
   loop
     execute format('drop function if exists %s cascade', f.firma);
   end loop;
