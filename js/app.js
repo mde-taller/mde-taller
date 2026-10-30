@@ -501,7 +501,7 @@ window.App = (() => {
   function marcarActivo(hash) {
     const base = '#/' + (hash.split('/')[1] || '');
     const alias = { '#/tarea': '#/tareas', '#/escanear': '#/tareas', '#/pausar': '#/tareas', '#/solicitar': '#/tareas',
-                    '#/ot': '#/ots', '#/imprimir': '#/ots', '#/solicitud-ot': '#/solicitudes' };
+                    '#/ot': '#/ots', '#/imprimir': '#/ots', '#/solicitud-ot': '#/solicitudes', '#/ingreso': '#/stock' };
     document.querySelectorAll('.lateral a, .inferior a').forEach(a => {
       a.classList.toggle('activo', a.getAttribute('href') === (alias[base] || base));
     });

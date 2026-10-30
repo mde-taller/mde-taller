@@ -2,7 +2,7 @@
 (() => {
   const { esc, num, parseNum, nroOT, fechaHora, tiene, esAdmin, limpiarCodigo, errMsg, toast, confirmar, modal, ruta, on, navegar } = App;
 
-  let pestana = 'buscar', ultimaBusqueda = '';
+  let pestana = 'buscar', ultimaBusqueda = '', filtroIngresos = '';
   let lote = [{ codigo: '', cantidad: '', obs: '' }], loteRevisado = false, loteObsGeneral = '';
 
   // Busca repuestos por código (con o sin espacios). Devuelve Map codigo_limpio -> repuesto.
@@ -28,14 +28,14 @@
     const [pendientes, aEntregar] = await Promise.all([
       Api.select('pedidos_repuesto', { select: 'id', estado: 'eq.PENDIENTE' }),
       Api.select('repuestos_ot', { select: 'id', estado: 'eq.PENDIENTE' })]);
-    if (!edita && !['buscar', 'movs', 'pedidos', 'entregar'].includes(pestana)) pestana = 'buscar';
+    if (!edita && !['buscar', 'movs', 'pedidos', 'entregar', 'ingresos'].includes(pestana)) pestana = 'buscar';
     if (primeraVez && aEntregar.length) pestana = 'entregar';
     else if (primeraVez && pendientes.length) pestana = 'pedidos';
     primeraVez = false;
     const tabs = [['buscar', 'Buscar stock'], ['entregar', `Repuestos a entregar${aEntregar.length ? ' (' + aEntregar.length + ')' : ''}`],
                   ['pedidos', `Pedidos de repuestos${pendientes.length ? ' (' + pendientes.length + ')' : ''}`]]
       .concat(edita ? [['lote', 'Ingreso por lote'], ['ajuste', 'Ajuste o stock inicial'], ['nuevo', 'Nuevo repuesto']] : [])
-      .concat([['movs', 'Movimientos']]);
+      .concat([['ingresos', 'Historial de ingresos'], ['movs', 'Movimientos']]);
     main.innerHTML = `
       <div class="encabezado"><div><h1>Stock y repuestos</h1>
         <div class="sub">${edita ? 'Las salidas se descuentan solas cuando se cargan repuestos en una OT.' : 'Consulta de stock.'}</div></div></div>
@@ -181,11 +181,11 @@
       on(cont, 'click', '[data-accion=guardar]', async (ev, b) => {
         b.disabled = true;
         try {
-          await Api.insert('movimientos_stock', lote.map(f => ({ tipo: 'ENTRADA', codigo: f.codigoReal, cantidad: parseNum(f.cantidad),
-            observacion: (f.obs || loteObsGeneral || '').trim() || null })));
+          const idIngreso = await Api.rpc('registrar_ingreso', { p_observacion: loteObsGeneral.trim() || null,
+            p_items: lote.map(f => ({ codigo: f.codigoReal, cantidad: parseNum(f.cantidad), observacion: (f.obs || '').trim() || null })) });
           toast(`Ingreso guardado: ${lote.length} repuestos`);
           lote = [{ codigo: '', cantidad: '', obs: '' }]; loteRevisado = false; loteObsGeneral = '';
-          pestana = 'movs'; navegar();
+          location.hash = '#/ingreso/' + idIngreso;
         } catch (e) { toast(errMsg(e), 'error'); b.disabled = false; }
       });
     }
@@ -338,6 +338,40 @@
     }
 
     // ---- Movimientos ----
+    if (pestana === 'ingresos') {
+      const ingresos = await Api.select('ingresos_stock', {
+        select: 'id,creado_en,observacion,usuario_nombre,modificado_en,creador:usuarios!ingresos_stock_creado_por_fkey(nombre),' +
+                'movs:movimientos_stock(codigo,cantidad,observacion,repuesto:repuestos(descripcion))',
+        order: 'creado_en.desc', limit: 150 });
+      cont.innerHTML = `
+        <div class="fila-campos" style="align-items:end">
+          <div class="campo" style="flex:2 1 260px"><label for="i-buscar">Buscar</label>
+            <input id="i-buscar" type="search" value="${esc(filtroIngresos)}" placeholder="Código, repuesto, remito o quién lo cargó"></div>
+          ${edita ? '<div class="campo"><button class="btn btn-primario" data-tab="lote">+ Nuevo ingreso</button></div>' : ''}
+        </div>
+        <div class="tabla-caja"><table><thead><tr><th>Fecha</th><th>Cargó</th><th>Remito / observación</th><th>Repuestos</th><th class="num">Unidades</th><th></th></tr></thead>
+          <tbody id="i-body"></tbody></table></div>
+        <div class="nota" style="margin-top:6px">Últimos 150 ingresos. Tocá uno para ver el detalle${edita ? ', modificarlo o ver sus cambios' : ''}.</div>`;
+      const pintarIngresos = () => {
+        const q = filtroIngresos.trim().toUpperCase();
+        const lista = ingresos.filter(i => !q || [i.observacion, i.usuario_nombre, i.creador && i.creador.nombre,
+          ...(i.movs || []).flatMap(m => [m.codigo, m.observacion, m.repuesto && m.repuesto.descripcion])]
+          .some(v => String(v || '').toUpperCase().includes(q)));
+        document.getElementById('i-body').innerHTML = lista.map(i => {
+          const movs = i.movs || [];
+          return `<tr class="clic" data-ingreso="${i.id}"><td style="white-space:nowrap">${fechaHora(i.creado_en)}${i.modificado_en ? '<div class="nota">modificado</div>' : ''}</td>
+            <td>${esc(i.creador ? i.creador.nombre : (i.usuario_nombre || ''))}</td><td>${esc(i.observacion || '')}</td>
+            <td>${movs.slice(0, 3).map(m => `<div>${esc(m.repuesto ? m.repuesto.descripcion : m.codigo)} <span class="nota">× ${num(m.cantidad)}</span></div>`).join('')}
+              ${movs.length > 3 ? `<div class="nota">y ${movs.length - 3} más</div>` : ''}${!movs.length ? '<span class="nota">Sin renglones</span>' : ''}</td>
+            <td class="num">${num(movs.reduce((a, m) => a + Number(m.cantidad), 0))}</td>
+            <td><a href="#/ingreso/${i.id}">${edita ? 'Ver / modificar' : 'Ver'}</a></td></tr>`;
+        }).join('') || '<tr><td colspan="6" class="vacio">No hay ingresos.</td></tr>';
+      };
+      pintarIngresos();
+      document.getElementById('i-buscar').addEventListener('input', ev => { filtroIngresos = ev.target.value; pintarIngresos(); });
+      on(cont, 'click', 'tr[data-ingreso]', (ev, tr) => { if (!ev.target.closest('a')) location.hash = '#/ingreso/' + tr.dataset.ingreso; });
+    }
+
     if (pestana === 'movs') {
       const movs = await Api.select('movimientos_stock', {
         select: 'fecha,tipo,codigo,cantidad,observacion,usuario_nombre,usuario:usuarios(nombre:nombre_visible),ot:ordenes_trabajo(id,numero),repuesto:repuestos(descripcion)',
@@ -350,5 +384,92 @@
           || '<tr><td colspan="8" class="vacio">Sin movimientos.</td></tr>'}</tbody></table></div>
         <div class="nota" style="margin-top:6px">Últimos 80 movimientos.</div>`;
     }
+  }, ['DEPOSITO', 'ADMINISTRADOR', 'OFICINA']);
+
+  // ---------------- Detalle de un ingreso de stock (ver, modificar, historial de cambios) ----------------
+  ruta(/^#\/ingreso\/(\d+)$/, async (main, id) => {
+    const edita = tiene('DEPOSITO') || esAdmin();
+    const filas = await Api.select('ingresos_stock', {
+      select: 'id,creado_en,observacion,usuario_nombre,modificado_en,creador:usuarios!ingresos_stock_creado_por_fkey(nombre),' +
+              'modificador:usuarios!ingresos_stock_modificado_por_fkey(nombre),' +
+              'movs:movimientos_stock(id,codigo,cantidad,observacion,repuesto:repuestos(descripcion)),' +
+              'cambios:ingresos_stock_cambios(creado_en,detalle,usuario:usuarios(nombre))', id: 'eq.' + id });
+    const ing = filas[0];
+    if (!ing) { main.innerHTML = '<div class="tarjeta">No se encontró el ingreso (puede que lo hayan eliminado). <a href="#/stock">Volver a Stock</a></div>'; return; }
+    const movs = (ing.movs || []).sort((a, b) => a.id - b.id);
+    const cambios = (ing.cambios || []).sort((a, b) => new Date(b.creado_en) - new Date(a.creado_en));
+    const volverAIngresos = () => { pestana = 'ingresos'; primeraVez = false; location.hash = '#/stock'; };
+
+    main.innerHTML = `
+      <a class="volver" href="#/stock" data-volver>${App.ICONOS.atras} Historial de ingresos</a>
+      <div class="encabezado"><div><h1>Ingreso de stock</h1>
+        <div class="sub">${fechaHora(ing.creado_en)} · cargó ${esc(ing.creador ? ing.creador.nombre : (ing.usuario_nombre || '—'))}
+          ${ing.modificado_en ? ` · modificado ${fechaHora(ing.modificado_en)}${ing.modificador ? ' por ' + esc(ing.modificador.nombre) : ''}` : ''}</div></div>
+        ${edita ? '<div class="acciones"><button class="btn btn-peligro" data-accion="eliminar">Eliminar ingreso</button></div>' : ''}</div>
+      <section class="tarjeta"><h2>Remito / observación</h2>
+        ${edita ? `<form id="f-obs" style="display:flex;gap:8px;flex-wrap:wrap"><input id="g-obs" value="${esc(ing.observacion || '')}" placeholder="Remito, proveedor…" style="flex:1 1 260px">
+          <button class="btn" type="submit">Guardar</button></form>` : `<div>${esc(ing.observacion || '—')}</div>`}
+      </section>
+      <section class="tarjeta"><h2>Repuestos (${movs.length})</h2>
+        <div class="tabla-caja"><table><thead><tr><th>Código</th><th>Repuesto</th><th class="num">Cantidad</th><th>Observación</th>${edita ? '<th></th>' : ''}</tr></thead><tbody>
+          ${movs.map(m => `<tr><td>${esc(m.codigo)}</td><td>${esc(m.repuesto ? m.repuesto.descripcion : '')}</td><td class="num"><b>${num(m.cantidad)}</b></td>
+            <td>${esc(m.observacion || '')}</td>
+            ${edita ? `<td style="white-space:nowrap"><button class="btn-texto" data-mod="${m.id}">Modificar</button>
+              <button class="btn-texto" style="color:var(--rojo)" data-quitar-linea="${m.id}">Quitar</button></td>` : ''}</tr>`).join('')
+            || `<tr><td colspan="5" class="vacio">Sin renglones.</td></tr>`}
+          <tr><th colspan="2" style="text-align:right">Total unidades</th><th class="num">${num(movs.reduce((a, m) => a + Number(m.cantidad), 0))}</th><th colspan="2"></th></tr>
+        </tbody></table></div>
+        ${edita ? `<form id="f-agregar" class="fila-campos" style="align-items:end;margin-top:12px">
+          <div class="campo" style="flex:2 1 240px"><label for="a-cod">Agregar repuesto</label><input id="a-cod" placeholder="Código o descripción" autocomplete="off"></div>
+          <div class="campo" style="flex:0 0 110px"><label for="a-cant">Cantidad</label><input id="a-cant" inputmode="decimal" autocomplete="off"></div>
+          <div class="campo" style="flex:1 1 180px"><label for="a-obs">Observación</label><input id="a-obs" autocomplete="off"></div>
+          <div class="campo"><button class="btn" type="submit">Agregar</button></div></form>
+          <div class="nota">Si un repuesto de este ingreso ya se usó en OT, no se puede bajar ni quitar más de lo que queda en stock.</div>` : ''}
+      </section>
+      <section class="tarjeta"><h2>Historial de cambios</h2>
+        ${cambios.length ? cambios.map(c => `<div style="padding:6px 0;border-bottom:1px solid var(--linea)"><span class="nota">${fechaHora(c.creado_en)} · ${esc(c.usuario ? c.usuario.nombre : '')}</span>
+          <div>${esc(c.detalle)}</div></div>`).join('') : '<div class="nota">Sin cambios desde que se cargó.</div>'}
+      </section>`;
+
+    on(main, 'click', '[data-volver]', ev => { ev.preventDefault(); volverAIngresos(); });
+    if (!edita) return;
+    const hacer = async (fn, args, ok) => {
+      try { await Api.rpc(fn, args); toast(ok); navegar(); return true; }
+      catch (e) { toast(errMsg(e), 'error'); return false; }
+    };
+    document.getElementById('f-obs').addEventListener('submit', ev => {
+      ev.preventDefault();
+      hacer('modificar_ingreso', { p_id: ing.id, p_observacion: document.getElementById('g-obs').value.trim() || null }, 'Observación guardada');
+    });
+    App.autocompletarRepuesto(document.getElementById('a-cod'), { alElegir: () => document.getElementById('a-cant').focus() });
+    document.getElementById('f-agregar').addEventListener('submit', ev => {
+      ev.preventDefault();
+      const cod = document.getElementById('a-cod').value.trim(), c = parseNum(document.getElementById('a-cant').value);
+      if (!cod) return toast('Elegí el repuesto', 'error');
+      if (!(c > 0)) return toast('La cantidad tiene que ser mayor a cero', 'error');
+      hacer('agregar_ingreso_linea', { p_ingreso_id: ing.id, p_codigo: cod, p_cantidad: c, p_observacion: document.getElementById('a-obs').value.trim() || null }, 'Repuesto agregado al ingreso');
+    });
+    on(main, 'click', '[data-mod]', async (ev, b) => {
+      const m = movs.find(x => String(x.id) === b.dataset.mod);
+      const v = await modal({ titulo: 'Modificar ' + m.codigo, textoOk: 'Guardar',
+        html: `<p>${esc(m.repuesto ? m.repuesto.descripcion : '')}</p><p class="nota">El stock se corrige solo con la diferencia.</p>`,
+        campos: [{ id: 'cant', label: 'Cantidad que entró', valor: String(m.cantidad).replace('.', ','), inputmode: 'decimal', obligatorio: true },
+                 { id: 'obs', label: 'Observación', valor: m.observacion || '' }] });
+      if (!v) return;
+      const c = parseNum(v.cant);
+      if (!(c > 0)) return toast('La cantidad tiene que ser mayor a cero (para sacarlo, usá Quitar)', 'error');
+      hacer('modificar_ingreso_linea', { p_mov_id: m.id, p_cantidad: c, p_observacion: v.obs.trim() || null }, 'Renglón modificado');
+    });
+    on(main, 'click', '[data-quitar-linea]', async (ev, b) => {
+      const m = movs.find(x => String(x.id) === b.dataset.quitarLinea);
+      if (!(await confirmar(`¿Quitar ${m.codigo} × ${num(m.cantidad)} de este ingreso? El stock baja en esa cantidad.`, { titulo: 'Quitar renglón', textoOk: 'Quitar', peligro: true }))) return;
+      hacer('quitar_ingreso_linea', { p_mov_id: m.id }, 'Renglón quitado');
+    });
+    on(main, 'click', '[data-accion=eliminar]', async () => {
+      if (!(await confirmar('¿Eliminar este ingreso completo? Se descuenta del stock todo lo que entró y desaparece del historial. No se puede deshacer.',
+        { titulo: 'Eliminar ingreso', textoOk: 'Eliminar', peligro: true }))) return;
+      try { await Api.rpc('eliminar_ingreso', { p_id: ing.id }); toast('Ingreso eliminado'); volverAIngresos(); }
+      catch (e) { toast(errMsg(e), 'error'); }
+    });
   }, ['DEPOSITO', 'ADMINISTRADOR', 'OFICINA']);
 })();
