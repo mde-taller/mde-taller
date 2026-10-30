@@ -38,11 +38,19 @@
 
   // ---------------- Lista de OT ----------------
   let filtroEstado = 'activas', filtroTexto = '';
+  const ORDENES_OT = {
+    numero: ['N° de OT, más nueva primero', 'numero.desc'],
+    antigua: ['Ingreso: más antigua primero', 'fecha_ingreso.asc,hora_ingreso.asc.nullsfirst,numero.asc'],
+    nueva: ['Ingreso: más nueva primero', 'fecha_ingreso.desc,hora_ingreso.desc.nullslast,numero.desc']
+  };
+  let ordenOTs = 'numero';
+  try { const o = localStorage.getItem('mde-ots-orden'); if (ORDENES_OT[o]) ordenOTs = o; } catch (e) { /* sin almacenamiento */ }
   ruta(/^#\/ots$/, async main => {
     const params = { select: 'id,numero,estado,fecha_ingreso,tipo,km,unidad:unidades(dominio,interno),cliente:clientes(nombre),tareas:tareas_ot(estado),pausas:pausas_ot(motivo,fin)',
-                     order: 'numero.desc', limit: 300 };
+                     order: ORDENES_OT[ordenOTs] ? ORDENES_OT[ordenOTs][1] : 'numero.desc' };
     if (filtroEstado === 'activas') params.estado = 'not.in.(CERRADA,PRUEBA)';
-    else if (filtroEstado !== 'todas') params.estado = 'eq.' + filtroEstado;
+    else if (filtroEstado !== 'todas') params.estado = 'eq.' + filtroEstado;   // un estado puntual: aparecen todas las OT de ese estado
+    else params.limit = 1000;
     const ots = await Api.select('ordenes_trabajo', params);
     main.innerHTML = `
       <div class="encabezado"><div><h1>Órdenes de trabajo</h1><div class="sub" id="cuenta"></div></div>
@@ -53,6 +61,8 @@
           ${ESTADOS_OT.map(e => `<option value="${esc(e)}">${esc(e)}</option>`).join('')}</select></div>
         <div class="campo"><label for="f-texto">Buscar</label>
           <input id="f-texto" type="search" placeholder="N° de OT, cliente, dominio o INT" value="${esc(filtroTexto)}"></div>
+        <div class="campo"><label for="f-orden">Ordenar</label><select id="f-orden">
+          ${Object.entries(ORDENES_OT).map(([k, [t]]) => `<option value="${k}" ${k === ordenOTs ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select></div>
       </div>
       <div class="tabla-caja"><table><thead><tr><th>N° OT</th><th>Ingreso</th><th>Cliente</th><th>Dominio · INT</th><th>Tipo</th><th>Estado</th><th>Tareas hechas</th></tr></thead>
         <tbody id="tbody"></tbody></table></div>`;
@@ -71,6 +81,11 @@
     };
     pintar();
     document.getElementById('f-estado').addEventListener('change', ev => { filtroEstado = ev.target.value; navegar(); });
+    document.getElementById('f-orden').addEventListener('change', ev => {
+      ordenOTs = ev.target.value;
+      try { localStorage.setItem('mde-ots-orden', ordenOTs); } catch (e) { /* sin almacenamiento */ }
+      navegar();
+    });
     document.getElementById('f-texto').addEventListener('input', ev => { filtroTexto = ev.target.value; pintar(); });
     on(main, 'click', 'tr[data-ot]', (ev, tr) => ir('#/ot/' + tr.dataset.ot));
   }, ['OFICINA', 'ADMINISTRADOR', 'DEPOSITO']);
