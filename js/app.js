@@ -361,6 +361,7 @@ window.App = (() => {
     pausa: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 5v14M15 5v14"/></svg>',
     atras: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>',
     taller: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>',
+    chat: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg>',
     lapiz: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h4L19 9l-4-4L4 16v4z"/></svg>'
   };
 
@@ -392,6 +393,7 @@ window.App = (() => {
       items.push(['#/trazabilidad', 'Trazabilidad']);
     }
     items.push(['grupo', 'General']);
+    items.push(['#/chat', 'Chat']);
     items.push(['#/avisos', 'Avisos']);
     return items;
   }
@@ -405,6 +407,7 @@ window.App = (() => {
         <button class="icono-btn" id="btn-menu" aria-label="Abrir menú">${ICONOS.menu}</button>
         <div class="marca">MDE · Taller</div>
         <span class="quien">${esc(st.nombre)}</span>
+        <a href="#/chat" class="icono-btn" aria-label="Chat">${ICONOS.chat}<span class="badge oculto" id="badge-chat"></span></a>
         <a href="#/avisos" class="icono-btn" aria-label="Avisos">${ICONOS.campana}<span class="badge oculto" id="badge-top"></span></a>
       </header>
       <div class="cuerpo">
@@ -451,6 +454,16 @@ window.App = (() => {
         b.classList.toggle('oculto', st.noLeidos === 0);
       }
     } catch (e) { /* sin conexión: se reintenta en el próximo ciclo */ }
+    actualizarChat();
+  }
+  // Mensajes de chat sin leer (contador en el ícono del chat).
+  async function actualizarChat() {
+    if (!st.usuarioId) return;
+    try {
+      const n = Number(await Api.rpc('chat_sin_leer')) || 0;
+      const b = document.getElementById('badge-chat');
+      if (b) { b.textContent = n > 99 ? '99+' : n; b.classList.toggle('oculto', n === 0); }
+    } catch (e) { /* sin conexión o chat sin instalar */ }
   }
 
   // ---------------- Navegación ----------------
@@ -543,7 +556,7 @@ window.App = (() => {
     pantallaIngreso();
   }
 
-  let intervaloAvisos = null;
+  let intervaloAvisos = null, intervaloChat = null;
   async function arrancar() {
     if (!Api.sesion) return pantallaIngreso();
     st.usuarioId = Api.usuarioId;
@@ -573,6 +586,8 @@ window.App = (() => {
     else navegar();
     clearInterval(intervaloAvisos);
     intervaloAvisos = setInterval(actualizarAvisos, 45000);
+    clearInterval(intervaloChat);
+    intervaloChat = setInterval(() => { if (!document.hidden) actualizarChat(); }, 20000);
   }
 
   window.addEventListener('hashchange', () => { if (st.usuarioId) navegar(); });
@@ -607,6 +622,6 @@ window.App = (() => {
     TIPOS, ROLES, MOTIVOS, textoMotivo, pausaAbierta, chipPausa, autocompletarRepuesto,
     autocompletarUnidad, unidadExacta, decidirFaltante, pedirADeposito, esFaltaDeStock,
     TRABAJOS_BUTACA, esTareaButaca, ordenButaca, nombreButaca, textoTrabajos, resumenButacas,
-    ruta, ir, on, navegar, actualizarAvisos, arrancar
+    ruta, ir, on, navegar, actualizarAvisos, actualizarChat, arrancar
   };
 })();
