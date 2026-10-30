@@ -194,7 +194,7 @@
       ${pausa ? `<div class="pausa-banner">
         <div><div class="titulo">OT pausada · ${esc(textoMotivo(pausa.motivo))}</div>
           <div class="det">Por ${esc(pausa.pausador ? pausa.pausador.nombre : '')} el ${hora(pausa.inicio)}${pausa.detalle ? ' · ' + esc(pausa.detalle) : ''}</div>
-          ${pedidos.map(p => `<div class="det">• ${esc(p.descripcion)} × ${num(p.cantidad)} — ${p.estado === 'RESUELTO' ? '<b>ya está</b>' + (p.nota ? ' (' + esc(p.nota) + ')' : '') : 'pedido a Depósito'}</div>`).join('')}</div>
+          ${pedidos.map(p => `<div class="det">• ${esc(p.descripcion)} × ${num(p.cantidad)} — ${p.estado === 'RESUELTO' ? '<b>ya está</b>' + (p.nota ? ' (' + esc(p.nota) + ')' : '') : p.estado === 'CANCELADO' ? '<b>cancelado</b>' + (p.nota ? ' (' + esc(p.nota) + ')' : '') : 'pedido a Depósito'}</div>`).join('')}</div>
         ${mia && !otCerrada ? '<button class="btn btn-primario" data-accion="reanudar-ot">Reanudar OT</button>' : ''}</div>` : ''}
       <section class="tarjeta">
         <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">
@@ -224,7 +224,7 @@
         ${pedidosTarea.length ? `<h3 style="margin-top:16px">Pedidos a Depósito</h3>
           ${pedidosTarea.map(p => `<div class="repuesto-fila"><div class="info"><div class="desc">${esc(p.descripcion)}</div>
             <div class="cod">Cód. ${esc(p.codigo || '—')} · Cant. ${num(p.cantidad)}</div>
-            <div style="margin-top:4px">${p.estado === 'RESUELTO' ? '<span class="chip verde">Ya está</span>' + (p.nota ? ` <span class="nota">${esc(p.nota)}</span>` : '') : '<span class="chip ambar">Pedido</span>'}</div></div></div>`).join('')}
+            <div style="margin-top:4px">${p.estado === 'RESUELTO' ? '<span class="chip verde">Ya está</span>' + (p.nota ? ` <span class="nota">${esc(p.nota)}</span>` : '') : p.estado === 'CANCELADO' ? '<span class="chip rojo">Cancelado</span>' + (p.nota ? ` <span class="nota">${esc(p.nota)}</span>` : '') : '<span class="chip ambar">Pedido</span>'}</div></div></div>`).join('')}
           ${pedidosTarea.some(p => p.estado === 'RESUELTO') && editable ? '<div class="nota">Cuando Depósito lo tiene, escanealo para cargarlo a la tarea.</div>' : ''}` : ''}
       </section>
       ${editable ? `<div style="display:flex;flex-direction:column;gap:8px">
@@ -831,7 +831,7 @@
       <div class="lista-tareas">${pedidos.length ? pedidos.map(p => `
         <div class="tarea-card">
           <div class="linea1"><span>${esc(nroOT(p.ot ? p.ot.numero : ''))} · ${fechaHora(p.creado_en)}</span>
-            ${p.estado === 'RESUELTO' ? '<span class="chip verde">Ya está</span>' : '<span class="chip">Pedido</span>'}</div>
+            ${p.estado === 'RESUELTO' ? '<span class="chip verde">Ya está</span>' : p.estado === 'CANCELADO' ? '<span class="chip rojo">Cancelado</span>' : '<span class="chip">Pedido</span>'}</div>
           <div class="titulo">${esc(p.descripcion)} × ${num(p.cantidad)}</div>
           ${p.codigo ? `<div class="linea3">Cód. ${esc(p.codigo)}</div>` : ''}
           ${p.nota ? `<div class="linea3">Depósito: ${esc(p.nota)}</div>` : ''}

@@ -350,6 +350,72 @@ window.App = (() => {
     });
   }
 
+  // ---------------- Pedidos de repuesto a Depósito: modificar, entregar, cancelar ----------------
+  const puedeGestionarPedidos = () => esOficina() || tiene('DEPOSITO');
+  const puedeEntregarPedidos = () => tiene('DEPOSITO') || tiene('ADMINISTRADOR');
+  function chipPedido(p) {
+    if (p.estado === 'RESUELTO') return p.nota === 'Entregado' ? '<span class="chip verde">Entregado</span>'
+      : `<span class="chip verde">Resuelto</span>${p.nota ? ` <span class="nota">${esc(p.nota)}</span>` : ''}`;
+    if (p.estado === 'CANCELADO') return `<span class="chip rojo">Cancelado</span>${p.nota ? ` <span class="nota">${esc(p.nota)}</span>` : ''}`;
+    return '<span class="chip ambar">Pendiente</span>';
+  }
+  // Botones para un pedido pendiente (el que llama maneja el clic con data-ped / data-id).
+  function botonesPedido(p) {
+    if (p.estado !== 'PENDIENTE' || !puedeGestionarPedidos() && !puedeEntregarPedidos()) return '';
+    return `<span style="white-space:nowrap">${puedeEntregarPedidos() ? `<button class="btn-texto" data-ped="entregar" data-id="${p.id}">Entregar</button> ` : ''}
+      ${puedeGestionarPedidos() ? `<button class="btn-texto" data-ped="modificar" data-id="${p.id}">Modificar</button>
+      <button class="btn-texto" style="color:var(--rojo)" data-ped="cancelar" data-id="${p.id}">Cancelar</button>` : ''}</span>`;
+  }
+  // Devuelve true si se hizo el cambio (para recargar la pantalla).
+  async function accionPedido(accion, p) {
+    if (accion === 'modificar') {
+      const espera = modal({ titulo: 'Modificar pedido de repuesto', textoOk: 'Guardar', campos: [
+        { id: 'cod', label: 'Código del repuesto (buscalo por código o descripción; vacío si no está en la lista)', valor: p.codigo || '', autocomplete: 'off' },
+        { id: 'desc', label: 'Descripción', valor: p.descripcion, obligatorio: true },
+        { id: 'cant', label: 'Cantidad', valor: String(p.cantidad).replace('.', ','), inputmode: 'decimal', obligatorio: true },
+        { id: 'det', label: 'Nota', tipo: 'textarea', valor: p.detalle || '' }] });
+      const inp = document.getElementById('m-cod');
+      if (inp) autocompletarRepuesto(inp, { alElegir: r => { const d = document.getElementById('m-desc'); if (d) d.value = r.descripcion; } });
+      const v = await espera;
+      if (!v) return false;
+      const c = parseNum(v.cant);
+      if (!(c > 0)) { toast('La cantidad tiene que ser mayor a cero', 'error'); return false; }
+      try {
+        await Api.rpc('modificar_pedido_repuesto', { p_id: p.id, p_codigo: v.cod.trim() || null, p_descripcion: v.desc.trim().toUpperCase(),
+                                                     p_cantidad: c, p_detalle: v.det.trim() || null });
+        toast('Pedido modificado'); return true;
+      } catch (e) { toast(errMsg(e), 'error'); return false; }
+    }
+    if (accion === 'entregar') {
+      if (!p.codigo) { toast('Este pedido no tiene código: tocá Modificar y elegí el repuesto de la lista', 'error'); return false; }
+      let hay = 0;
+      try { const x = (await Api.rpc('consultar_stock', { p_codigo: p.codigo }))[0]; hay = x ? Number(x.disponible) : 0; } catch (e) { /* sigue con 0 */ }
+      if (!(hay > 0)) { toast(`No hay stock de ${p.codigo}. Cargá el ingreso en Stock antes de entregarlo.`, 'error'); return false; }
+      const sugerida = Math.min(Number(p.cantidad), hay);
+      const v = await modal({ titulo: 'Entregar repuesto', textoOk: 'Entregar',
+        html: `<p><b>${esc(p.descripcion)}</b> (${esc(p.codigo)})<br>Pedido: ${num(p.cantidad)} · Stock: ${num(hay)}</p>
+               <p class="nota">Se carga en la OT como entregado y se descuenta del stock. Si entregás menos, el resto sigue pedido.</p>`,
+        campos: [{ id: 'cant', label: 'Cantidad que entregás', valor: String(sugerida).replace('.', ','), inputmode: 'decimal', obligatorio: true }] });
+      if (!v) return false;
+      const c = parseNum(v.cant);
+      if (!(c > 0)) { toast('La cantidad tiene que ser mayor a cero', 'error'); return false; }
+      try {
+        await Api.rpc('entregar_pedido_repuesto', { p_id: p.id, p_cantidad: c });
+        toast(c < Number(p.cantidad) ? `Entregado ${num(c)}. Siguen pedidos ${num(Number(p.cantidad) - c)}` : 'Repuesto entregado y cargado en la OT');
+        return true;
+      } catch (e) { toast(errMsg(e), 'error'); return false; }
+    }
+    if (accion === 'cancelar') {
+      const v = await modal({ titulo: 'Cancelar pedido de repuesto', textoOk: 'Cancelar pedido', textoCancelar: 'Volver', peligro: true,
+        html: `<p><b>${esc(p.descripcion)}</b> × ${num(p.cantidad)}</p><p class="nota">Le avisamos a quien lo pidió.</p>`,
+        campos: [{ id: 'motivo', label: '¿Por qué se cancela?', tipo: 'textarea', obligatorio: true }] });
+      if (!v) return false;
+      try { await Api.rpc('cancelar_pedido_repuesto', { p_id: p.id, p_motivo: v.motivo.trim() }); toast('Pedido cancelado'); return true; }
+      catch (e) { toast(errMsg(e), 'error'); return false; }
+    }
+    return false;
+  }
+
   // ---------------- Estructura ----------------
   const ICONOS = {
     menu: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg>',
@@ -622,6 +688,6 @@ window.App = (() => {
     TIPOS, ROLES, MOTIVOS, textoMotivo, pausaAbierta, chipPausa, autocompletarRepuesto,
     autocompletarUnidad, unidadExacta, decidirFaltante, pedirADeposito, esFaltaDeStock,
     TRABAJOS_BUTACA, esTareaButaca, ordenButaca, nombreButaca, textoTrabajos, resumenButacas,
-    ruta, ir, on, navegar, actualizarAvisos, actualizarChat, arrancar
+    chipPedido, botonesPedido, accionPedido, ruta, ir, on, navegar, actualizarAvisos, actualizarChat, arrancar
   };
 })();

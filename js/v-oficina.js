@@ -610,7 +610,7 @@
     'SALIDA': ['Finalización', '', 'estados'], 'PAUSA': ['Pausa', 'rojo', 'pausas'], 'TRABAJO': ['Trabajó', 'verde', 'trabajo'],
     'ASIGNACIÓN': ['Asignada', '', 'trabajo'], 'TAREA TERMINADA': ['Terminó', 'verde', 'trabajo'], 'TAREA SOLICITADA': ['Solicitó tarea', '', 'trabajo'],
     'PIDIÓ TAREA': ['Pidió tarea', '', 'trabajo'], 'REPUESTO CARGADO': ['Repuesto', 'ambar', 'repuestos'],
-    'PAUSA TAREA': ['Pausó tarea', 'rojo', 'pausas'], 'TAREA DESDE OFICINA': ['Oficina', 'azul', 'trabajo'],
+    'PAUSA TAREA': ['Pausó tarea', 'rojo', 'pausas'], 'PEDIDO MODIFICADO': ['Pedido modificado', 'ambar', 'repuestos'], 'PEDIDO ENTREGADO': ['Entregó parte', 'ambar', 'repuestos'], 'TAREA DESDE OFICINA': ['Oficina', 'azul', 'trabajo'],
     'REPUESTO ENTREGADO': ['Entregado', 'ambar', 'repuestos'], 'PEDIDO DE REPUESTO': ['Pedido a Depósito', 'ambar', 'repuestos'] };
   const FILTROS_REG = [['todo', 'Todo'], ['pausas', 'Pausas'], ['estados', 'Estados'], ['trabajo', 'Mecánicos'], ['repuestos', 'Repuestos']];
   let filtroReg = 'todo';
@@ -774,10 +774,10 @@
               <button class="btn" type="submit">Agregar repuesto</button></form>` : ''}
           </section>
           ${pedidos.length || pausasViejas.length ? `<section class="tarjeta"><h2>Pausas y pedidos de repuesto</h2>
-            ${pedidos.length ? `<div class="tabla-caja" style="margin-bottom:12px"><table><thead><tr><th>Repuesto pedido</th><th class="num">Cant.</th><th>Pidió</th><th>Estado</th></tr></thead><tbody>
+            ${pedidos.length ? `<div class="tabla-caja" style="margin-bottom:12px"><table><thead><tr><th>Repuesto pedido</th><th class="num">Cant.</th><th>Pidió</th><th>Estado</th><th></th></tr></thead><tbody>
               ${pedidos.map(p => `<tr><td>${esc(p.descripcion)}${p.codigo ? `<div class="nota">${esc(p.codigo)}</div>` : '<div class="nota">No está en la lista</div>'}${p.detalle ? `<div class="nota">Nota: ${esc(p.detalle)}</div>` : ''}</td>
                 <td class="num">${num(p.cantidad)}</td><td>${esc(p.pedidor ? p.pedidor.nombre : '')}<div class="nota">${fechaHora(p.creado_en)}</div></td>
-                <td>${p.estado === 'RESUELTO' ? `<span class="chip verde">Resuelto</span>${p.nota ? ` <span class="nota">${esc(p.nota)}</span>` : ''}` : '<span class="chip ambar">Pendiente</span>'}</td></tr>`).join('')}
+                <td>${App.chipPedido(p)}</td><td>${['CERRADA', 'PRUEBA'].includes(ot.estado) ? '' : App.botonesPedido(p)}</td></tr>`).join('')}
               </tbody></table></div>` : ''}
             ${pausasViejas.map(p => `<div class="nota" style="margin-bottom:4px">• ${esc(textoMotivo(p.motivo))}${p.detalle ? ' (' + esc(p.detalle) + ')' : ''}: ${hora(p.inicio)} → ${hora(p.fin)} · pausó ${esc(p.pausador ? p.pausador.nombre : '')}, reanudó ${esc(p.reanudador ? p.reanudador.nombre : '')}</div>`).join('')}
           </section>` : ''}
@@ -832,6 +832,10 @@
       catch (e) { toast(errMsg(e), 'error'); }
     };
     on(main, 'click', '[data-entregar]', (ev, b) => entregar([Number(b.dataset.entregar)]));
+    on(main, 'click', '[data-ped]', async (ev, b) => {
+      const p = pedidos.find(x => String(x.id) === b.dataset.id);
+      if (p && await App.accionPedido(b.dataset.ped, p)) navegar();
+    });
     on(main, 'click', '[data-entregar-todos]', () => entregar(pendientesEntrega.map(r => r.id)));
 
     if (!puede) return;

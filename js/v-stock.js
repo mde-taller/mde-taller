@@ -246,15 +246,20 @@
             <td class="num">${p.codigo ? `<b style="color:${(disp.get(p.codigo) || 0) >= Number(p.cantidad) ? 'var(--verde)' : 'var(--rojo)'}">${num(disp.get(p.codigo) || 0)}</b>` : '—'}</td>
             <td>${p.ot ? `<a href="#/ot/${p.ot.id}">${esc(nroOT(p.ot.numero))}</a><div class="nota">${esc(p.ot.unidad ? p.ot.unidad.dominio : '')}</div>` : ''}</td>
             <td>${esc(p.pedidor ? p.pedidor.nombre : '')}</td>
-            ${edita ? `<td><button class="btn btn-verde btn-chico" data-resolver="${p.id}">Resuelto</button></td>` : ''}</tr>`).join('')
+            ${edita ? `<td><div style="display:flex;flex-direction:column;gap:4px;align-items:flex-start">${App.botonesPedido(p)}
+              <button class="btn-texto" data-resolver="${p.id}" title="Ya está resuelto sin cargarlo desde acá">Marcar resuelto</button></div></td>` : ''}</tr>`).join('')
             || `<tr><td colspan="7" class="vacio">No hay pedidos pendientes.</td></tr>`}
         </tbody></table></div>
-        <h2 style="margin:0 0 10px">Resueltos</h2>
+        <h2 style="margin:0 0 10px">Resueltos y cancelados</h2>
         <div class="tabla-caja"><table><thead><tr><th>Resuelto</th><th>Repuesto</th><th class="num">Cant.</th><th>OT</th><th>Pidió</th><th>Resolvió</th></tr></thead><tbody>
-          ${hechos.map(p => `<tr><td>${fechaHora(p.resuelto_en)}</td><td>${esc(p.descripcion)}${p.nota ? `<div class="nota">${esc(p.nota)}</div>` : ''}</td>
+          ${hechos.map(p => `<tr><td>${fechaHora(p.resuelto_en)}</td><td>${esc(p.descripcion)}<div>${App.chipPedido(p)}</div></td>
             <td class="num">${num(p.cantidad)}</td><td>${p.ot ? esc(nroOT(p.ot.numero)) : ''}</td><td>${esc(p.pedidor ? p.pedidor.nombre : '')}</td>
             <td>${esc(p.resolvio ? p.resolvio.nombre : '')}</td></tr>`).join('') || '<tr><td colspan="6" class="vacio">Sin pedidos resueltos.</td></tr>'}
         </tbody></table></div>`;
+      on(cont, 'click', '[data-ped]', async (ev, b) => {
+        const p = pend.find(x => String(x.id) === b.dataset.id);
+        if (p && await App.accionPedido(b.dataset.ped, p)) navegar();
+      });
       on(cont, 'click', '[data-resolver]', async (ev, b) => {
         const p = pend.find(x => String(x.id) === b.dataset.resolver);
         const v = await App.modal({ titulo: 'Pedido resuelto', textoOk: 'Marcar resuelto',
