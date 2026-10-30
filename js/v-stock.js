@@ -1,18 +1,19 @@
 // MDE · Taller — stock y repuestos (Depósito, Administrador; Oficina solo consulta).
 (() => {
-  const { esc, num, parseNum, nroOT, fechaHora, tiene, esAdmin, limpiarCodigo, errMsg, toast, ruta, on, navegar } = App;
+  const { esc, num, parseNum, nroOT, fechaHora, tiene, esAdmin, limpiarCodigo, errMsg, toast, confirmar, modal, ruta, on, navegar } = App;
 
   let pestana = 'buscar', ultimaBusqueda = '';
   let lote = [{ codigo: '', cantidad: '', obs: '' }], loteRevisado = false, loteObsGeneral = '';
 
   // Busca repuestos por código (con o sin espacios). Devuelve Map codigo_limpio -> repuesto.
-  async function buscarCodigos(codigos) {
+  // Los eliminados no aparecen, salvo que se pida (para recuperarlos al darlos de alta de nuevo).
+  async function buscarCodigos(codigos, incluirEliminados = false) {
     const limpios = [...new Set(codigos.map(limpiarCodigo).filter(Boolean))];
     const mapa = new Map();
     for (let i = 0; i < limpios.length; i += 100) {
       const parte = limpios.slice(i, i + 100).map(c => '"' + c.replace(/"/g, '') + '"').join(',');
-      const filas = await Api.select('repuestos', { select: 'codigo,descripcion,codigo_limpio', codigo_limpio: 'in.(' + parte + ')' });
-      for (const f of filas) mapa.set(f.codigo_limpio, f);
+      const filas = await Api.select('repuestos', { select: 'codigo,descripcion,codigo_limpio,eliminado', codigo_limpio: 'in.(' + parte + ')' });
+      for (const f of filas) if (incluirEliminados || !f.eliminado) mapa.set(f.codigo_limpio, f);
     }
     return mapa;
   }
@@ -70,15 +71,52 @@
                                                             codigo: 'eq.' + exacto.codigo })).concat(filas);
           }
           res.innerHTML = filas.length ? `<div class="tabla-caja"><table><thead><tr><th>Código</th><th>Repuesto</th><th class="num">Inicial</th>
-            <th class="num">Entradas</th><th class="num">Salidas</th><th class="num">Ajustes</th><th class="num">Disponible</th></tr></thead><tbody>
+            <th class="num">Entradas</th><th class="num">Salidas</th><th class="num">Ajustes</th><th class="num">Disponible</th>${edita ? '<th></th>' : ''}</tr></thead><tbody>
             ${filas.map(f => `<tr><td>${esc(f.codigo)}</td><td>${esc(f.descripcion)}</td><td class="num">${num(f.stock_inicial)}</td>
               <td class="num">${num(f.entradas)}</td><td class="num">${num(f.salidas)}</td><td class="num">${num(f.ajustes)}</td>
-              <td class="num"><b style="color:${Number(f.disponible) > 0 ? 'var(--verde)' : 'var(--rojo)'}">${num(f.disponible)}</b></td></tr>`).join('')}
+              <td class="num"><b style="color:${Number(f.disponible) > 0 ? 'var(--verde)' : 'var(--rojo)'}">${num(f.disponible)}</b></td>
+              ${edita ? `<td style="white-space:nowrap"><button class="btn-texto" data-modificar-rep="${esc(f.codigo)}" data-desc="${esc(f.descripcion)}" data-disp="${f.disponible}">Modificar</button>
+                <button class="btn-texto" style="color:var(--rojo)" data-eliminar-rep="${esc(f.codigo)}" data-desc="${esc(f.descripcion)}" data-disp="${f.disponible}">Eliminar</button></td>` : ''}</tr>`).join('')}
             </tbody></table></div>${filas.length >= 60 ? '<div class="nota" style="margin-top:6px">Se muestran los primeros 60. Afiná la búsqueda.</div>' : ''}`
             : '<div class="tarjeta vacio">No se encontraron repuestos.</div>';
         } catch (e) { res.innerHTML = `<div class="error-box">${esc(errMsg(e))}</div>`; }
       };
       document.getElementById('f-buscar').addEventListener('submit', ev => { ev.preventDefault(); buscar(); });
+      on(cont, 'click', '[data-modificar-rep]', async (ev, b) => {
+        const cod = b.dataset.modificarRep, disp = Number(b.dataset.disp) || 0;
+        const v = await modal({ titulo: 'Modificar repuesto ' + cod, textoOk: 'Guardar',
+          html: '<p class="nota">Si cambiás el stock, se guarda como un ajuste con el motivo que escribas (queda en Movimientos).</p>',
+          campos: [
+            { id: 'desc', label: 'Descripción', valor: b.dataset.desc, obligatorio: true },
+            { id: 'stock', label: 'Stock disponible', valor: String(disp).replace('.', ','), inputmode: 'decimal', obligatorio: true },
+            { id: 'motivo', label: 'Motivo del cambio de stock (si lo cambiás)', valor: '' }] });
+        if (!v) return;
+        const desc = v.desc.trim().toUpperCase(), nuevo = parseNum(v.stock);
+        if (isNaN(nuevo) || nuevo < 0) return toast('El stock tiene que ser un número igual o mayor a cero', 'error');
+        const dif = Math.round((nuevo - disp) * 100) / 100;
+        if (dif !== 0 && !v.motivo.trim()) return toast('Escribí el motivo del cambio de stock (conteo, rotura, corrección…)', 'error');
+        try {
+          const cambios = {};
+          if (desc !== b.dataset.desc) cambios.descripcion = desc;
+          if (Object.keys(cambios).length) await Api.update('repuestos', { codigo: 'eq.' + cod }, cambios);
+          if (dif !== 0) await Api.insert('movimientos_stock', { tipo: 'AJUSTE', codigo: cod, cantidad: dif, observacion: v.motivo.trim() });
+          toast(dif !== 0 ? `Guardado. Stock: ${num(nuevo)}` : Object.keys(cambios).length ? 'Repuesto modificado' : 'No hubo cambios');
+          buscar();
+        } catch (e) { toast(errMsg(e), 'error'); }
+      });
+      on(cont, 'click', '[data-eliminar-rep]', async (ev, b) => {
+        const cod = b.dataset.eliminarRep, disp = Number(b.dataset.disp) || 0;
+        const ok = await confirmar(`¿Eliminar el repuesto ${cod} · ${b.dataset.desc}?` +
+          (disp ? ` Todavía tiene ${num(disp)} en stock.` : '') +
+          ' Deja de aparecer en las búsquedas y no se puede cargar en OT nuevas. Lo que ya se cargó en OT y los movimientos quedan guardados.',
+          { titulo: 'Eliminar repuesto', textoOk: 'Eliminar', peligro: true });
+        if (!ok) return;
+        try {
+          const r = await Api.rpc('eliminar_repuesto', { p_codigo: cod });
+          toast(r === 'BORRADO' ? 'Repuesto eliminado' : 'Repuesto eliminado (su historial queda guardado)');
+          buscar();
+        } catch (e) { toast(errMsg(e), 'error'); }
+      });
       if (ultimaBusqueda) buscar();
       document.getElementById('b-texto').focus();
     }
@@ -279,10 +317,17 @@
         const info = document.getElementById('r-info');
         if (!cod || !desc) { info.innerHTML = '<div class="error-box">Completá código y descripción.</div>'; return; }
         try {
-          const existe = await buscarCodigos([cod]);
-          if (existe.size) { info.innerHTML = `<div class="error-box">Ya existe: ${esc([...existe.values()][0].codigo)} · ${esc([...existe.values()][0].descripcion)}</div>`; return; }
-          await Api.insert('repuestos', { codigo: cod, descripcion: desc });
-          toast('Repuesto agregado'); ev.target.reset(); info.innerHTML = '';
+          const existe = [...(await buscarCodigos([cod], true)).values()][0];
+          if (existe && !existe.eliminado) { info.innerHTML = `<div class="error-box">Ya existe: ${esc(existe.codigo)} · ${esc(existe.descripcion)}</div>`; return; }
+          if (existe) {
+            // Había sido eliminado: se recupera con la descripción nueva.
+            await Api.update('repuestos', { codigo: 'eq.' + existe.codigo }, { eliminado: false, descripcion: desc });
+            toast('Repuesto recuperado: ' + existe.codigo);
+          } else {
+            await Api.insert('repuestos', { codigo: cod, descripcion: desc });
+            toast('Repuesto agregado');
+          }
+          ev.target.reset(); info.innerHTML = '';
         } catch (e) { info.innerHTML = `<div class="error-box">${esc(errMsg(e))}</div>`; }
       });
     }
