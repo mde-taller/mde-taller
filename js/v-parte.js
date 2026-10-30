@@ -8,6 +8,8 @@
   const fechaCorta = d => new Date(d).toLocaleString('es-AR', Object.assign({ day: '2-digit', month: '2-digit' }, H24)).replace(',', '');
   const fd = s => s ? s.split('-').reverse().join('/') : '';
   const minDesde = d => (Date.now() - new Date(d).getTime()) / 60000;
+  let orden = 'antigua';   // 'antigua': de la más antigua a la más nueva; 'nueva': al revés
+  try { orden = localStorage.getItem('mde-parte-orden') === 'nueva' ? 'nueva' : 'antigua'; } catch (e) { /* sin almacenamiento */ }
   const plural = (n, uno, varios) => `${n} ${n === 1 ? uno : varios}`;
 
   const NIVELES = {
@@ -50,7 +52,7 @@
       const ots = datos.ots.map(o => {
         const min = minDesde(o.ingreso);
         return Object.assign({}, o, { min, nivel: nivel(min / 1440) });
-      }).sort((a, b) => b.min - a.min);
+      }).sort((a, b) => orden === 'nueva' ? a.min - b.min : b.min - a.min);
       const porEstado = e => ots.filter(o => o.estado === e).length;
       const esperando = ots.filter(o => o.estado === 'ESPERANDO REPUESTOS');
       const enTrabajo = ots.filter(o => o.trabajando);
@@ -100,7 +102,14 @@
         </section>
 
         <section class="tarjeta parte-unidades">
-          <h2>Unidades en el taller <span class="nota" style="font-family:var(--texto);font-weight:400">· de la que lleva más tiempo a la que menos</span></h2>
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+            <h2 style="margin:0">Unidades en el taller <span class="nota" style="font-family:var(--texto);font-weight:400">· por fecha de ingreso, ${orden === 'nueva' ? 'de la más nueva a la más antigua' : 'de la más antigua a la más nueva'}</span></h2>
+            <label class="no-imprimir" style="display:flex;align-items:center;gap:6px;font-weight:600">Ordenar
+              <select id="p-orden" style="width:auto">
+                <option value="antigua" ${orden === 'antigua' ? 'selected' : ''}>Más antigua primero</option>
+                <option value="nueva" ${orden === 'nueva' ? 'selected' : ''}>Más nueva primero</option>
+              </select></label>
+          </div>
           ${ots.length ? `
           <div class="tabla-caja parte-tabla"><table><thead><tr>
             <th style="min-width:150px">En el taller</th><th>OT</th><th>Interno</th><th>Patente</th><th>Cliente</th><th>Estado</th><th style="min-width:220px">Ahora</th><th class="num">Tareas</th><th>Mecánicos</th>
@@ -144,6 +153,11 @@
     st.limpiar.push(() => clearInterval(timer));
 
     on(main, 'click', '[data-accion=imprimir]', () => window.print());
+    on(main, 'change', '#p-orden', (ev, sel) => {
+      orden = sel.value === 'nueva' ? 'nueva' : 'antigua';
+      try { localStorage.setItem('mde-parte-orden', orden); } catch (e) { /* sin almacenamiento */ }
+      pintar();
+    });
     on(main, 'click', '[data-accion=actualizar]', () => cargar());
     on(main, 'click', 'tr[data-ir]', (ev, tr) => { location.hash = '#/ot/' + tr.dataset.ir; });
     on(main, 'submit', '#p-colores', async ev => {

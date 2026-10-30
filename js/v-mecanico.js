@@ -132,7 +132,7 @@
   ruta(/^#\/tarea\/(\d+)$/, async (main, id) => {
     const [tareas, registros, repuestos, pedidosTarea, butacas] = await Promise.all([
       Api.select('tareas_ot', {
-        select: 'id,descripcion,horas,cantidad,horas_total,estado,ot_id,tempario(categoria:categorias_tempario(nombre)),' +
+        select: 'id,descripcion,horas,cantidad,horas_total,estado,nota_pausa,ot_id,tempario(categoria:categorias_tempario(nombre)),' +
                 'ot:ordenes_trabajo(id,numero,estado,tipo,km,observaciones,unidad:unidades(dominio,interno,chasis,marca:marcas(nombre),modelo:modelos(nombre)),cliente:clientes(nombre),' +
                 'pausas:pausas_ot(id,motivo,detalle,inicio,fin,pausador:usuarios!pausas_ot_pausada_por_fkey(nombre:nombre_visible))),' +
                 'asignaciones(mecanico_id,terminada_en,usuario:usuarios(nombre:nombre_visible,numero:numero_visible))',
@@ -200,6 +200,7 @@
         <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">
           <h3>Tiempo trabajado</h3><span class="nota">Solo control interno</span></div>
         <div class="reloj" id="reloj">${duracion(acumulado())}</div>
+        ${t.nota_pausa && !abierto && t.estado !== 'HECHA' ? `<div class="aviso-box" style="margin-bottom:8px"><b>Pausada:</b> ${esc(t.nota_pausa)}</div>` : ''}
         ${botones}
       </section>
       ${esTareaButaca(t.descripcion) || butacas.length ? `<section class="tarjeta">
@@ -241,7 +242,13 @@
       catch (e) { toast(errMsg(e), 'error'); }
     };
     on(main, 'click', '[data-accion=iniciar]', () => accion('iniciar_tarea', 'Cronómetro en marcha'));
-    on(main, 'click', '[data-accion=pausar]', () => accion('pausar_tarea', 'Tu tarea quedó en pausa'));
+    on(main, 'click', '[data-accion=pausar]', async () => {
+      const v = await modal({ titulo: 'Pausar mi tarea', textoOk: 'Pausar',
+        campos: [{ id: 'c', label: '¿Por qué la pausás?', tipo: 'textarea', obligatorio: true }] });
+      if (!v) return;
+      try { await Api.rpc('pausar_tarea', { p_tarea_id: Number(id), p_comentario: v.c.trim() }); toast('Tu tarea quedó en pausa'); navegar(); }
+      catch (e) { toast(errMsg(e), 'error'); }
+    });
     on(main, 'click', '[data-accion=terminar]', async () => {
       const ok = await confirmar('¿Terminaste tu parte de esta tarea? Se detiene el cronómetro.', { titulo: 'Terminar tarea', textoOk: 'Sí, terminar' });
       if (ok) accion('terminar_tarea', otros.length ? 'Listo. La tarea queda hecha cuando termine tu compañero.' : 'Tarea terminada');

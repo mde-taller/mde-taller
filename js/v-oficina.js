@@ -534,6 +534,7 @@
     'SALIDA': ['Finalización', '', 'estados'], 'PAUSA': ['Pausa', 'rojo', 'pausas'], 'TRABAJO': ['Trabajó', 'verde', 'trabajo'],
     'ASIGNACIÓN': ['Asignada', '', 'trabajo'], 'TAREA TERMINADA': ['Terminó', 'verde', 'trabajo'], 'TAREA SOLICITADA': ['Solicitó tarea', '', 'trabajo'],
     'PIDIÓ TAREA': ['Pidió tarea', '', 'trabajo'], 'REPUESTO CARGADO': ['Repuesto', 'ambar', 'repuestos'],
+    'PAUSA TAREA': ['Pausó tarea', 'rojo', 'pausas'], 'TAREA DESDE OFICINA': ['Oficina', 'azul', 'trabajo'],
     'REPUESTO ENTREGADO': ['Entregado', 'ambar', 'repuestos'], 'PEDIDO DE REPUESTO': ['Pedido a Depósito', 'ambar', 'repuestos'] };
   const FILTROS_REG = [['todo', 'Todo'], ['pausas', 'Pausas'], ['estados', 'Estados'], ['trabajo', 'Mecánicos'], ['repuestos', 'Repuestos']];
   let filtroReg = 'todo';
@@ -577,7 +578,7 @@
                                               'solicitante:usuarios!ordenes_trabajo_solicitada_por_fkey(nombre:nombre_visible),' +
                                               'pausas:pausas_ot(id,motivo,detalle,inicio,fin,pausador:usuarios!pausas_ot_pausada_por_fkey(nombre:nombre_visible),reanudador:usuarios!pausas_ot_reanudada_por_fkey(nombre:nombre_visible))',
                                       id: 'eq.' + id }),
-      Api.select('tareas_ot', { select: 'id,renglon,descripcion,horas,cantidad,horas_total,estado,tempario(categoria:categorias_tempario(nombre)),asignaciones(mecanico_id,terminada_en,usuario:usuarios(nombre:nombre_visible,responsable_id,numero:numero_visible))',
+      Api.select('tareas_ot', { select: 'id,renglon,descripcion,horas,cantidad,horas_total,estado,nota_pausa,tempario(categoria:categorias_tempario(nombre)),asignaciones(mecanico_id,terminada_en,usuario:usuarios(nombre:nombre_visible,responsable_id,numero:numero_visible))',
                                 ot_id: 'eq.' + id, order: 'renglon' }),
       Api.select('repuestos_ot', { select: 'id,codigo,cantidad,tarea_id,cargado_en,estado,entregado_en,repuesto:repuestos(descripcion),cargador:usuarios!repuestos_ot_cargado_por_fkey(nombre:nombre_visible),entregador:usuarios!repuestos_ot_entregado_por_fkey(nombre:nombre_visible)',
                                    ot_id: 'eq.' + id, order: 'id' })
@@ -591,14 +592,17 @@
     const { ot, tareas, reps } = await cargarOT(id);
     if (!ot) { main.innerHTML = '<div class="tarjeta">No se encontró la OT.</div>'; return; }
     const puede = esOficina();
-    const [mecs, sols, reales, pedidos, pedTareas, registro] = await Promise.all([
+    const [mecs, sols, reales, pedidos, pedTareas, registro, cronos] = await Promise.all([
       puede ? mecanicos() : Promise.resolve([]),
       puede ? Api.select('solicitudes', { select: selSolicitud, ot_id: 'eq.' + id, estado: 'eq.PENDIENTE', order: 'creado_en' }) : Promise.resolve([]),
       esAdmin() ? Api.select('horas_reales', { select: 'tarea_id,mecanico,horas_reales,en_curso', ot_id: 'eq.' + id }) : Promise.resolve([]),
       Api.select('pedidos_repuesto', { select: 'id,descripcion,codigo,cantidad,estado,nota,detalle,creado_en,pedidor:usuarios!pedidos_repuesto_pedido_por_fkey(nombre:nombre_visible)', ot_id: 'eq.' + id, order: 'creado_en.desc' }),
       puede ? Api.select('pedidos_tarea', { select: 'id,tarea_id,descripcion,mecanico:usuarios!pedidos_tarea_mecanico_id_fkey(nombre:nombre_visible)', ot_id: 'eq.' + id, estado: 'eq.PENDIENTE', order: 'creado_en' }) : Promise.resolve([]),
-      esAdmin() ? Api.rpc('registro_ot', { p_ot_id: Number(id) }).catch(() => null) : Promise.resolve(null)
+      esAdmin() ? Api.rpc('registro_ot', { p_ot_id: Number(id) }).catch(() => null) : Promise.resolve(null),
+      puede ? Api.rpc('cronometros_ot', { p_ot_id: Number(id) }).catch(() => []) : Promise.resolve([])
     ]);
+    const enCurso = (tareaId, mecId) => cronos.some(c => c.tarea_id === tareaId && c.mecanico_id === mecId);
+    const otActiva = !['CERRADA', 'PRUEBA'].includes(ot.estado);
     const u = ot.unidad || {};
     const entrega = App.tiene('DEPOSITO') || esAdmin();
     const pendientesEntrega = reps.filter(r => r.estado !== 'ENTREGADO');
@@ -648,9 +652,17 @@
               return `<tr><td>${t.renglon}</td>
                 <td>${esc(t.descripcion)}${t.tempario && t.tempario.categoria ? `<div class="nota">${esc(t.tempario.categoria.nombre)}</div>` : '<div class="nota">A mano</div>'}
                   ${t.butacas.length ? `<div class="nota">Butacas: ${esc(resumenButacas(t.butacas))}</div>` : ''}
+                  ${t.nota_pausa && t.estado !== 'HECHA' ? `<div class="nota" style="color:var(--rojo)"><b>Pausada:</b> ${esc(t.nota_pausa)}</div>` : ''}
                   ${puede && (t.butacas.length || esTareaButaca(t.descripcion)) && !['CERRADA', 'PRUEBA'].includes(ot.estado) ? `<a href="#/butacas/${t.id}" class="nota">${t.butacas.length ? 'Cambiar butacas' : 'Marcar butacas en el plano'}</a>` : ''}</td>
                 <td class="num">${num(t.cantidad)}</td><td class="num">${num(t.horas)}</td><td class="num"><b>${num(t.horas_total)}</b></td>
-                <td>${asig.map(a => `<span class="chip" style="margin:2px">${esc(conNumero(a.usuario))}${a.usuario && a.usuario.responsable_id ? ' (ayudante)' : ''}${a.terminada_en ? ' ✓' : ''}${puede ? `<button class="chip-x" data-desasignar="${t.id}" data-mec="${a.mecanico_id}" aria-label="Quitar a ${esc(a.usuario ? a.usuario.nombre : '')}">×</button>` : ''}</span>`).join('')}
+                <td>${asig.map(a => {
+                  const corre = enCurso(t.id, a.mecanico_id);
+                  const ctl = puede && otActiva && !a.terminada_en && t.estado !== 'HECHA';
+                  return `<div style="margin:2px 0"><span class="chip ${corre ? 'azul' : ''}" style="margin:2px">${esc(conNumero(a.usuario))}${a.usuario && a.usuario.responsable_id ? ' (ayudante)' : ''}${a.terminada_en ? ' ✓' : corre ? ' · en curso' : ''}${puede ? `<button class="chip-x" data-desasignar="${t.id}" data-mec="${a.mecanico_id}" aria-label="Quitar a ${esc(a.usuario ? a.usuario.nombre : '')}">×</button>` : ''}</span>
+                    ${ctl ? `<span style="white-space:nowrap">${corre ? `<button class="btn-texto" data-tarea-acc="PAUSAR" data-t="${t.id}" data-mec="${a.mecanico_id}">Pausar</button>`
+                      : pausa ? '' : `<button class="btn-texto" data-tarea-acc="INICIAR" data-t="${t.id}" data-mec="${a.mecanico_id}">Iniciar</button>`}
+                      <button class="btn-texto" data-tarea-acc="TERMINAR" data-t="${t.id}" data-mec="${a.mecanico_id}">Terminar</button></span>` : ''}</div>`;
+                }).join('')}
                   ${puede && asig.length < 2 && libres.length ? `<select data-asignar="${t.id}" aria-label="Asignar mecánico" style="width:auto;min-height:36px;margin-top:4px">
                     <option value="">${asig.length ? '+ segundo mecánico' : 'Asignar…'}</option>${libres.map(m => `<option value="${m.id}">${esc(m.nombre)}</option>`).join('')}</select>` : ''}
                   ${!asig.length && !puede ? '<span class="nota">Sin asignar</span>' : ''}
@@ -790,6 +802,26 @@
       if (!sel.value) return;
       try { await Api.insert('asignaciones', { tarea_id: Number(sel.dataset.asignar), mecanico_id: sel.value }); toast('Mecánico asignado'); recargar(); }
       catch (e) { toast(errMsg(e), 'error'); sel.value = ''; }
+    });
+    on(main, 'click', '[data-tarea-acc]', async (ev, b) => {
+      const acc = b.dataset.tareaAcc, tId = Number(b.dataset.t);
+      const t = tareas.find(x => x.id === tId) || {};
+      const a = (t.asignaciones || []).find(x => x.mecanico_id === b.dataset.mec) || {};
+      const quien = conNumero(a.usuario);
+      let comentario = null;
+      if (acc === 'PAUSAR') {
+        const v = await modal({ titulo: 'Pausar tarea de ' + quien, textoOk: 'Pausar', html: `<p class="nota">${esc(t.renglon + '. ' + t.descripcion)}</p>`,
+          campos: [{ id: 'c', label: '¿Por qué se pausa?', tipo: 'textarea', obligatorio: true }] });
+        if (!v) return;
+        comentario = v.c.trim();
+      } else if (acc === 'TERMINAR') {
+        if (!(await confirmar(`¿Dar por terminada la parte de ${quien} en "${t.descripcion}"?`, { titulo: 'Terminar tarea', textoOk: 'Terminar' }))) return;
+      }
+      try {
+        await Api.rpc('tarea_oficina', { p_tarea_id: tId, p_mecanico_id: b.dataset.mec, p_accion: acc, p_comentario: comentario });
+        toast(acc === 'INICIAR' ? 'Tarea iniciada: corre el cronómetro de ' + quien : acc === 'PAUSAR' ? 'Tarea pausada' : 'Tarea terminada');
+        recargar();
+      } catch (e) { toast(errMsg(e), 'error'); }
     });
     on(main, 'click', '[data-desasignar]', async (ev, b) => {
       const ok = await confirmar('¿Quitar a este mecánico de la tarea? Su tiempo registrado queda guardado.', { textoOk: 'Quitar' });
