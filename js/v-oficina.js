@@ -355,7 +355,8 @@
     const otResueltas = pedidosOT.filter(s => s.estado !== 'PENDIENTE').slice(0, 10);
     main.innerHTML = `
       <div class="encabezado"><div><h1>Solicitudes</h1>
-        <div class="sub">${esAdmin() ? `${otPend.length} pedidos de OT, ` : ''}${pedTareas.length} pedidos de tarea y ${pend.length} tareas nuevas pendientes</div></div></div>
+        <div class="sub">${esAdmin() ? `${otPend.length} pedidos de OT, ` : ''}${pedTareas.length} pedidos de tarea y ${pend.length} tareas nuevas pendientes</div></div>
+        <div class="acciones"><a class="btn" href="#/solicitudes/imprimir">Imprimir / PDF</a></div></div>
       <h2 style="margin:0 0 10px">Mecánicos que piden una tarea</h2>
       <div class="lista-tareas" style="margin-bottom:20px">${pedTareas.length ? pedTareas.map(p => `
         <div class="tarea-card">
@@ -405,6 +406,66 @@
   }, ['OFICINA', 'ADMINISTRADOR']);
 
   // ---------------- Revisar un pedido de OT del mecánico (Administrador) ----------------
+  // ---------------- Solicitudes: versión para imprimir ----------------
+  let impResueltas = false;
+  ruta(/^#\/solicitudes\/imprimir$/, async main => {
+    const estilo = document.createElement('style');
+    estilo.textContent = '@media print { @page { size: A4 portrait; margin: 10mm; } }';
+    document.head.appendChild(estilo);
+    st.limpiar.push(() => estilo.remove());
+    const [pend, resueltas, pedidosOT, pedTareas] = await Promise.all([
+      Api.select('solicitudes', { select: selSolicitud, estado: 'eq.PENDIENTE', order: 'creado_en' }),
+      impResueltas ? Api.select('solicitudes', { select: selSolicitud, estado: 'neq.PENDIENTE', order: 'resuelta_en.desc', limit: 30 }) : Promise.resolve([]),
+      esAdmin() ? Api.select('solicitudes_de_ot', { select: selSolicitudOT, order: 'creado_en.desc', limit: 30 }) : Promise.resolve([]),
+      Api.select('pedidos_tarea', { select: selPedidoTarea, estado: 'eq.PENDIENTE', order: 'creado_en' })
+    ]);
+    const otPend = pedidosOT.filter(s => s.estado === 'PENDIENTE');
+    const otResueltas = impResueltas ? pedidosOT.filter(s => s.estado !== 'PENDIENTE').slice(0, 10) : [];
+    const ahora = new Date().toLocaleString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+    const quien = m => esc(m ? m.nombre : '');
+    const seccion = (titulo, cabeza, filas, vacio) => `<section class="tarjeta"><h2>${titulo} (${filas.length})</h2>
+      ${filas.length ? `<div class="tabla-caja informe-tabla"><table><thead><tr>${cabeza.map(c => `<th>${c}</th>`).join('')}</tr></thead>
+        <tbody>${filas.join('')}</tbody></table></div>` : `<div class="nota">${vacio}</div>`}</section>`;
+
+    main.innerHTML = `
+      <div class="acciones no-imprimir" style="margin-bottom:12px;align-items:center">
+        <a class="btn" href="#/solicitudes">${ICONOS.atras} Volver a Solicitudes</a>
+        <button class="btn btn-primario" data-accion="imprimir">Imprimir / Guardar PDF</button>
+        <label class="check"><input type="checkbox" id="i-resueltas" ${impResueltas ? 'checked' : ''}> Incluir las resueltas recientes</label>
+      </div>
+      <div class="informe">
+        <div class="informe-cabecera">
+          <div><div class="informe-empresa">MDE Electromecánica</div><h1>Solicitudes pendientes</h1></div>
+          <div class="informe-emitido">Emitido el ${esc(ahora)} por ${esc(st.nombre)}</div></div>
+        ${seccion('Mecánicos que piden una tarea', ['Fecha', 'OT', 'Dominio', 'Tarea', 'Mecánico', 'Firma / resolución'],
+          pedTareas.map(p => `<tr><td style="white-space:nowrap">${fechaHora(p.creado_en)}</td><td style="white-space:nowrap">${esc(nroOT(p.ot_numero))}</td>
+            <td>${esc(p.dominio || '')}</td><td>${esc(p.descripcion)}</td><td>${quien(p.mecanico)}</td><td style="min-width:30mm"></td></tr>`),
+          'No hay pedidos de tareas.')}
+        ${esAdmin() ? seccion('Pedidos de OT nueva', ['Fecha', 'Mecánico', 'Unidad', 'Tipo · KM', 'Trabajos', 'Repuestos', 'Observaciones'],
+          otPend.map(s => `<tr><td style="white-space:nowrap">${fechaHora(s.creado_en)}</td><td>${quien(s.mecanico)}</td>
+            <td>${esc(s.unidad ? s.unidad.dominio + (s.unidad.interno ? ' · INT ' + s.unidad.interno : '') : s.unidad_texto || '')}
+              ${s.unidad && s.unidad.cliente ? `<div class="nota">${esc(s.unidad.cliente.nombre)}</div>` : ''}</td>
+            <td>${esc(s.tipo || '')}<div class="nota">KM ${num(s.km, 0)}</div></td>
+            <td>${(s.tareas || []).map(t => `<div>• ${esc(t.descripcion)}${Number(t.cantidad || 1) !== 1 ? ' × ' + num(t.cantidad) : ''}</div>`).join('') || '—'}</td>
+            <td>${(s.repuestos || []).map(r => `<div>• ${esc(r.descripcion || '')}${r.codigo ? ` <span class="nota">(${esc(r.codigo)})</span>` : ''} × ${num(r.cantidad)}</div>`).join('') || '—'}</td>
+            <td>${esc(s.observaciones || '')}</td></tr>`),
+          'No hay pedidos de OT para revisar.') : ''}
+        ${seccion('Tareas nuevas pedidas en OT abiertas', ['Fecha', 'OT', 'Dominio', 'Mecánico', 'Tarea', 'Falla', 'Firma / resolución'],
+          pend.map(s => `<tr><td style="white-space:nowrap">${fechaHora(s.creado_en)}</td><td style="white-space:nowrap">${esc(nroOT(s.ot.numero))}</td>
+            <td>${esc(s.ot.unidad ? s.ot.unidad.dominio : '')}</td><td>${quien(s.mecanico)}</td>
+            <td>${esc(s.tarea_propuesta)}${Number(s.cantidad) !== 1 ? ' × ' + num(s.cantidad) : ''}</td><td>${esc(s.falla)}</td><td style="min-width:30mm"></td></tr>`),
+          'No hay tareas pendientes.')}
+        ${impResueltas ? seccion('Resueltas recientemente', ['Qué', 'Mecánico', 'Detalle', 'Resultado'],
+          otResueltas.map(s => `<tr><td>Pedido de OT</td><td>${quien(s.mecanico)}</td><td>${esc(s.unidad ? s.unidad.dominio : s.unidad_texto)}</td>
+            <td>${s.estado === 'APROBADA' ? 'Aceptada' + (s.ot ? ' · ' + esc(nroOT(s.ot.numero)) : '') : 'Rechazada: ' + esc(s.motivo_rechazo || '')}</td></tr>`)
+          .concat(resueltas.map(s => `<tr><td>Tarea en ${esc(nroOT(s.ot.numero))}</td><td>${quien(s.mecanico)}</td><td>${esc(s.tarea_propuesta)}</td>
+            <td>${s.estado === 'APROBADA' ? 'Aprobada' : 'Rechazada: ' + esc(s.motivo_rechazo || '')}</td></tr>`)),
+          'Sin solicitudes resueltas.') : ''}
+      </div>`;
+    on(main, 'click', '[data-accion=imprimir]', () => window.print());
+    on(main, 'change', '#i-resueltas', (ev, cb) => { impResueltas = cb.checked; navegar(); });
+  }, ['OFICINA', 'ADMINISTRADOR']);
+
   ruta(/^#\/solicitud-ot\/(\d+)$/, async (main, id) => {
     const filas = await Api.select('solicitudes_de_ot', { select: selSolicitudOT, id: 'eq.' + id });
     const s = filas[0];
