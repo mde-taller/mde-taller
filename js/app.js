@@ -362,7 +362,7 @@ window.App = (() => {
   // Botones para un pedido pendiente (el que llama maneja el clic con data-ped / data-id).
   function botonesPedido(p) {
     if (p.estado !== 'PENDIENTE' || !puedeGestionarPedidos() && !puedeEntregarPedidos()) return '';
-    return `<span style="white-space:nowrap">${puedeEntregarPedidos() ? `<button class="btn-texto" data-ped="entregar" data-id="${p.id}">Entregar</button> ` : ''}
+    return `<span style="display:inline-flex;flex-direction:column;align-items:flex-start;gap:2px">${puedeEntregarPedidos() ? `<button class="btn-texto" data-ped="entregar" data-id="${p.id}">Entregar</button> ` : ''}
       ${puedeGestionarPedidos() ? `<button class="btn-texto" data-ped="modificar" data-id="${p.id}">Modificar</button>
       <button class="btn-texto" style="color:var(--rojo)" data-ped="cancelar" data-id="${p.id}">Cancelar</button>` : ''}</span>`;
   }
