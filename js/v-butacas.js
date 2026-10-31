@@ -46,7 +46,7 @@
     const t = tareas[0];
     if (!t) { main.innerHTML = '<div class="tarjeta">No se encontró la tarea.</div>'; return; }
     const mia = (t.asignaciones || []).some(a => a.mecanico_id === st.usuarioId);
-    const cerrada = ['CERRADA', 'PRUEBA'].includes(t.ot.estado);
+    const cerrada = ['CERRADA', 'FACTURADA', 'PRUEBA'].includes(t.ot.estado);
     const editable = !cerrada && (mia || esOficina());
     const volver = mia && tiene('MECANICO') ? '#/tarea/' + t.id : '#/ot/' + t.ot_id;
     const marcadas = new Map(filas.map(f => [f.butaca, f.trabajos]));

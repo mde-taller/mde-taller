@@ -12,7 +12,7 @@
   const local = (f, h) => f ? new Date(`${f}T${h || '00:00:00'}`) : null;
   const ingresoDe = o => local(o.fecha_ingreso, o.hora_ingreso);
   const egresoDe = o => local(o.fecha_salida, o.hora_salida);
-  const terminada = o => ['FINALIZADA', 'CERRADA'].includes(o.estado);
+  const terminada = o => ['FINALIZADA', 'FACTURADA', 'CERRADA'].includes(o.estado);
   const minEntre = (a, b) => (((b ? new Date(b) : new Date()) - new Date(a)) / 60000);
   const horas = min => num(Math.round(Number(min || 0) / 6) / 10) + ' h';
   // Tiempo en el taller: del ingreso al egreso (o a cuando se finalizó, o hasta ahora si sigue).

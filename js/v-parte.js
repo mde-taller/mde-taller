@@ -13,7 +13,7 @@
   // Filtro de estado: 'ACTIVAS' (todas las activas) o un estado puntual.
   const ACTIVOS = ['ABIERTA', 'EN DIAGNÓSTICO', 'EN REPARACIÓN', 'ESPERANDO REPUESTOS'];
   const FILTROS = [['ACTIVAS', 'Todas las activas'], ...ACTIVOS.map(e => [e, e.charAt(0) + e.slice(1).toLowerCase()]),
-    ['FINALIZADA', 'Finalizadas'], ['CERRADA', 'Cerradas']];
+    ['FINALIZADA', 'Finalizadas'], ['FACTURADA', 'Facturadas'], ['CERRADA', 'Cerradas']];
   let filtro = 'ACTIVAS';
   try { const f = localStorage.getItem('mde-parte-estado'); if (FILTROS.some(([v]) => v === f)) filtro = f; } catch (e) { /* sin almacenamiento */ }
   const plural = (n, uno, varios) => `${n} ${n === 1 ? uno : varios}`;
@@ -33,7 +33,7 @@
 
   // Qué está pasando ahora con la OT.
   function ahora(o) {
-    if (o.salida) return `<div class="parte-ahora quieta"><b>${o.estado === 'CERRADA' ? 'Cerrada' : 'Finalizada'}</b>
+    if (o.salida) return `<div class="parte-ahora quieta"><b>${o.estado === 'CERRADA' ? 'Cerrada' : o.estado === 'FACTURADA' ? 'Facturada' : 'Finalizada'}</b>
       <div class="nota">${esc(fd(o.fecha_salida))}${o.hora_salida ? ' ' + esc(o.hora_salida.slice(0, 5)) : ''}</div></div>`;
     if (o.trabajando) return `<div class="parte-ahora trabajo"><b>Trabajando:</b> ${esc(o.trabajando)}</div>`;
     if (o.pausa) return `<div class="parte-ahora pausa"><b>Pausada:</b> ${esc(o.pausa.motivo)}${o.pausa.detalle ? ' · ' + esc(o.pausa.detalle) : ''}

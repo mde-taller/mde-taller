@@ -678,7 +678,9 @@
       puede ? Api.rpc('cronometros_ot', { p_ot_id: Number(id) }).catch(() => []) : Promise.resolve([])
     ]);
     const enCurso = (tareaId, mecId) => cronos.some(c => c.tarea_id === tareaId && c.mecanico_id === mecId);
-    const otActiva = !['CERRADA', 'PRUEBA'].includes(ot.estado);
+    const otActiva = !['CERRADA', 'FACTURADA', 'PRUEBA'].includes(ot.estado);
+    // OT facturada: no se tocan tareas ni repuestos (para cambiar algo, primero se cambia el estado).
+    const editar = puede && ot.estado !== 'FACTURADA';
     const u = ot.unidad || {};
     const entrega = App.tiene('DEPOSITO') || esAdmin();
     const pendientesEntrega = reps.filter(r => r.estado !== 'ENTREGADO');
@@ -712,6 +714,7 @@
         <div><div class="titulo">OT pausada · ${esc(textoMotivo(pausa.motivo))}</div>
           <div class="det">Por ${esc(pausa.pausador ? pausa.pausador.nombre : '')} el ${hora(pausa.inicio)}${pausa.detalle ? ' · ' + esc(pausa.detalle) : ''}</div></div>
         ${puede ? '<button class="btn btn-primario" data-accion="reanudar">Reanudar OT</button>' : ''}</div>` : ''}
+      ${ot.estado === 'FACTURADA' ? '<div class="aviso-box no-imprimir">OT facturada: no se pueden cambiar tareas ni repuestos. Si hay que corregir algo, cambiá el estado.</div>' : ''}
       ${sols.length ? `<section class="tarjeta" style="border-color:var(--ambar-borde);background:var(--ambar)"><h2>Solicitudes pendientes</h2>
         ${sols.map((s, i) => `<div class="repuesto-fila"><div class="info"><div class="desc">${esc(s.tarea_propuesta)}${Number(s.cantidad) !== 1 ? ' × ' + num(s.cantidad) : ''}</div>
           <div class="cod">${esc(s.mecanico ? s.mecanico.nombre : '')} · Falla: ${esc(s.falla)}</div></div>
@@ -721,7 +724,7 @@
         <div class="principal">
           <section class="tarjeta"><h2>Trabajos y servicios</h2>
             <div class="tabla-caja"><table><thead><tr><th>#</th><th style="min-width:180px">Tarea</th><th class="num">Cant.</th><th class="num">Hs c/u</th><th class="num">Hs total</th><th>Mecánicos</th><th>Estado</th>
-              ${esAdmin() ? '<th>Horas reales</th>' : ''}${puede ? '<th></th>' : ''}</tr></thead><tbody>
+              ${esAdmin() ? '<th>Horas reales</th>' : ''}${editar ? '<th></th>' : ''}</tr></thead><tbody>
             ${tareas.length ? tareas.map(t => {
               const asig = t.asignaciones || [];
               const libres = mecs.filter(m => !asig.some(a => a.mecanico_id === m.id));
@@ -729,28 +732,28 @@
                 <td>${esc(t.descripcion)}${t.tempario && t.tempario.categoria ? `<div class="nota">${esc(t.tempario.categoria.nombre)}</div>` : '<div class="nota">A mano</div>'}
                   ${t.butacas.length ? `<div class="nota">Butacas: ${esc(resumenButacas(t.butacas))}</div>` : ''}
                   ${t.nota_pausa && t.estado !== 'HECHA' ? `<div class="nota" style="color:var(--rojo)"><b>Pausada:</b> ${esc(t.nota_pausa)}</div>` : ''}
-                  ${puede && (t.butacas.length || esTareaButaca(t.descripcion)) && !['CERRADA', 'PRUEBA'].includes(ot.estado) ? `<a href="#/butacas/${t.id}" class="nota">${t.butacas.length ? 'Cambiar butacas' : 'Marcar butacas en el plano'}</a>` : ''}</td>
+                  ${editar && (t.butacas.length || esTareaButaca(t.descripcion)) && !['CERRADA', 'FACTURADA', 'PRUEBA'].includes(ot.estado) ? `<a href="#/butacas/${t.id}" class="nota">${t.butacas.length ? 'Cambiar butacas' : 'Marcar butacas en el plano'}</a>` : ''}</td>
                 <td class="num">${num(t.cantidad)}</td><td class="num">${num(t.horas)}</td><td class="num"><b>${num(t.horas_total)}</b></td>
                 <td>${asig.map(a => {
                   const corre = enCurso(t.id, a.mecanico_id);
-                  const ctl = puede && otActiva && !a.terminada_en && t.estado !== 'HECHA';
-                  return `<div style="margin:2px 0"><span class="chip ${corre ? 'azul' : ''}" style="margin:2px">${esc(conNumero(a.usuario))}${a.usuario && a.usuario.responsable_id ? ' (ayudante)' : ''}${a.terminada_en ? ' ✓' : corre ? ' · en curso' : ''}${puede ? `<button class="chip-x" data-desasignar="${t.id}" data-mec="${a.mecanico_id}" aria-label="Quitar a ${esc(a.usuario ? a.usuario.nombre : '')}">×</button>` : ''}</span>
+                  const ctl = editar && otActiva && !a.terminada_en && t.estado !== 'HECHA';
+                  return `<div style="margin:2px 0"><span class="chip ${corre ? 'azul' : ''}" style="margin:2px">${esc(conNumero(a.usuario))}${a.usuario && a.usuario.responsable_id ? ' (ayudante)' : ''}${a.terminada_en ? ' ✓' : corre ? ' · en curso' : ''}${editar ? `<button class="chip-x" data-desasignar="${t.id}" data-mec="${a.mecanico_id}" aria-label="Quitar a ${esc(a.usuario ? a.usuario.nombre : '')}">×</button>` : ''}</span>
                     ${ctl ? `<span style="white-space:nowrap">${corre ? `<button class="btn-texto" data-tarea-acc="PAUSAR" data-t="${t.id}" data-mec="${a.mecanico_id}">Pausar</button>`
                       : pausa ? '' : `<button class="btn-texto" data-tarea-acc="INICIAR" data-t="${t.id}" data-mec="${a.mecanico_id}">Iniciar</button>`}
                       <button class="btn-texto" data-tarea-acc="TERMINAR" data-t="${t.id}" data-mec="${a.mecanico_id}">Terminar</button></span>` : ''}</div>`;
                 }).join('')}
-                  ${puede && asig.length < 2 && libres.length ? `<select data-asignar="${t.id}" aria-label="Asignar mecánico" style="width:auto;min-height:36px;margin-top:4px">
+                  ${editar && asig.length < 2 && libres.length ? `<select data-asignar="${t.id}" aria-label="Asignar mecánico" style="width:auto;min-height:36px;margin-top:4px">
                     <option value="">${asig.length ? '+ segundo mecánico' : 'Asignar…'}</option>${libres.map(m => `<option value="${m.id}">${esc(m.nombre)}</option>`).join('')}</select>` : ''}
-                  ${!asig.length && !puede ? '<span class="nota">Sin asignar</span>' : ''}
+                  ${!asig.length && !editar ? '<span class="nota">Sin asignar</span>' : ''}
                   ${pedTareas.filter(p => p.tarea_id === t.id).map(p => `<div class="nota" style="margin-top:4px">Pide hacerla: <b>${esc(p.mecanico ? p.mecanico.nombre : '')}</b>
                     <button class="btn-texto" data-asignar-pt="${p.id}">Asignar</button> <button class="btn-texto" data-rechazar-pt="${p.id}">Rechazar</button></div>`).join('')}</td>
                 <td>${chipEstadoTarea(t.estado)}</td>
                 ${esAdmin() ? `<td>${(realesPorTarea[t.id] || []).map(r => `<div class="nota">${esc(r.mecanico)}: ${num(r.horas_reales)} h${r.en_curso ? ' (en curso)' : ''}</div>`).join('') || '<span class="nota">—</span>'}</td>` : ''}
-                ${puede ? `<td style="white-space:nowrap"><button class="btn-texto" data-editar-tarea="${t.id}">Editar</button><button class="btn-texto" data-quitar-tarea="${t.id}">Quitar</button></td>` : ''}</tr>`;
+                ${editar ? `<td style="white-space:nowrap"><button class="btn-texto" data-editar-tarea="${t.id}">Editar</button><button class="btn-texto" data-quitar-tarea="${t.id}">Quitar</button></td>` : ''}</tr>`;
             }).join('') : `<tr><td colspan="9" class="vacio">Sin trabajos.</td></tr>`}
             </tbody></table></div>
             <div style="margin-top:10px;font-weight:600">Total horas (tempario): ${num(totalHoras)} h</div>
-            ${puede ? `<form id="f-agregar-tarea" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
+            ${editar ? `<form id="f-agregar-tarea" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
               <input id="o-tarea" list="dl-o-tareas" placeholder="Agregar tarea: buscá en el tempario o escribila" autocomplete="off" style="flex:3 1 260px">
               <datalist id="dl-o-tareas">${temp.map(x => `<option value="${esc(claveTarea(x))}">${num(x.horas)} h</option>`).join('')}</datalist>
               <input id="o-tarea-cant" value="1" inputmode="decimal" aria-label="Cantidad" title="Cantidad" style="flex:0 0 80px;text-align:center">
@@ -759,16 +762,16 @@
           <section class="tarjeta">
             <div class="encabezado" style="margin-bottom:10px"><h2>Repuestos</h2>
               ${entrega && pendientesEntrega.length ? `<button class="btn btn-verde btn-chico" data-entregar-todos>Marcar entregados (${pendientesEntrega.length})</button>` : ''}</div>
-            <div class="tabla-caja"><table><thead><tr><th>Código</th><th>Repuesto</th><th class="num">Cantidad</th><th>Tarea</th><th>Cargó</th><th>Entrega</th>${puede ? '<th></th>' : ''}</tr></thead><tbody>
+            <div class="tabla-caja"><table><thead><tr><th>Código</th><th>Repuesto</th><th class="num">Cantidad</th><th>Tarea</th><th>Cargó</th><th>Entrega</th>${editar ? '<th></th>' : ''}</tr></thead><tbody>
               ${reps.length ? reps.map(r => `<tr><td>${esc(r.codigo)}</td><td>${esc(r.repuesto ? r.repuesto.descripcion : '')}</td><td class="num">${num(r.cantidad)}</td>
                 <td>${r.tarea_id ? '#' + renglonDe.get(r.tarea_id) : '—'}</td><td>${esc(r.cargador ? r.cargador.nombre : '')}<div class="nota">${fechaHora(r.cargado_en)}</div></td>
                 <td>${r.estado === 'ENTREGADO'
                   ? `<span class="chip verde">Entregado</span><div class="nota">${esc(r.entregador ? r.entregador.nombre : '')} ${fechaHora(r.entregado_en)}</div>`
                   : `<span class="chip ambar">Pendiente</span>${entrega ? ` <button class="btn-texto" data-entregar="${r.id}">Entregar</button>` : ''}`}</td>
-                ${puede ? `<td><button class="btn-texto" data-quitar-rep="${r.id}">Quitar</button></td>` : ''}</tr>`).join('')
+                ${editar ? `<td><button class="btn-texto" data-quitar-rep="${r.id}">Quitar</button></td>` : ''}</tr>`).join('')
                 : `<tr><td colspan="7" class="vacio">Sin repuestos cargados.</td></tr>`}
             </tbody></table></div>
-            ${puede ? `<form id="f-agregar-rep" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
+            ${editar ? `<form id="f-agregar-rep" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
               <input id="o-rep-cod" placeholder="Código o descripción" style="flex:2 1 220px">
               <input id="o-rep-cant" placeholder="Cantidad" inputmode="decimal" style="flex:0 1 110px" autocomplete="off">
               <button class="btn" type="submit">Agregar repuesto</button></form>` : ''}
@@ -777,7 +780,7 @@
             ${pedidos.length ? `<div class="tabla-caja" style="margin-bottom:12px"><table><thead><tr><th>Repuesto pedido</th><th class="num">Cant.</th><th>Pidió</th><th>Estado</th><th></th></tr></thead><tbody>
               ${pedidos.map(p => `<tr><td>${esc(p.descripcion)}${p.codigo ? `<div class="nota">${esc(p.codigo)}</div>` : '<div class="nota">No está en la lista</div>'}${p.detalle ? `<div class="nota">Nota: ${esc(p.detalle)}</div>` : ''}</td>
                 <td class="num">${num(p.cantidad)}</td><td>${esc(p.pedidor ? p.pedidor.nombre : '')}<div class="nota">${fechaHora(p.creado_en)}</div></td>
-                <td>${App.chipPedido(p)}</td><td>${['CERRADA', 'PRUEBA'].includes(ot.estado) ? '' : App.botonesPedido(p)}</td></tr>`).join('')}
+                <td>${App.chipPedido(p)}</td><td>${['CERRADA', 'FACTURADA', 'PRUEBA'].includes(ot.estado) ? '' : App.botonesPedido(p)}</td></tr>`).join('')}
               </tbody></table></div>` : ''}
             ${pausasViejas.map(p => `<div class="nota" style="margin-bottom:4px">• ${esc(textoMotivo(p.motivo))}${p.detalle ? ' (' + esc(p.detalle) + ')' : ''}: ${hora(p.inicio)} → ${hora(p.fin)} · pausó ${esc(p.pausador ? p.pausador.nombre : '')}, reanudó ${esc(p.reanudador ? p.reanudador.nombre : '')}</div>`).join('')}
           </section>` : ''}
@@ -937,7 +940,7 @@
     });
     on(main, 'click', '[data-aprobar]', async (ev, b) => { if (await aprobar(sols[Number(b.dataset.aprobar)], mecs)) recargar(); });
     on(main, 'click', '[data-rechazar]', async (ev, b) => { if (await rechazar(sols[Number(b.dataset.rechazar)])) recargar(); });
-    document.getElementById('f-agregar-tarea').addEventListener('submit', async ev => {
+    if (document.getElementById('f-agregar-tarea')) document.getElementById('f-agregar-tarea').addEventListener('submit', async ev => {
       ev.preventDefault();
       const texto = document.getElementById('o-tarea').value.trim();
       const cant = parseNum(document.getElementById('o-tarea-cant').value);
@@ -951,10 +954,10 @@
       catch (e) { toast(errMsg(e), 'error'); }
     });
     let repElegido = null;
-    autocompletarRepuesto(document.getElementById('o-rep-cod'), {
+    if (document.getElementById('o-rep-cod')) autocompletarRepuesto(document.getElementById('o-rep-cod'), {
       alElegir: r => { repElegido = r; document.getElementById('o-rep-cant').focus(); },
       alEscribir: () => { repElegido = null; } });
-    document.getElementById('f-agregar-rep').addEventListener('submit', async ev => {
+    if (document.getElementById('f-agregar-rep')) document.getElementById('f-agregar-rep').addEventListener('submit', async ev => {
       ev.preventDefault();
       const cod = document.getElementById('o-rep-cod').value.trim(), cant = parseNum(document.getElementById('o-rep-cant').value);
       if (!cod) return;

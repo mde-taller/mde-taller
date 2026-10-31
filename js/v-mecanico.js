@@ -28,7 +28,7 @@
       let grupo = 'pendientes';
       if (hecha) grupo = 'hechas';
       else if (corriendo.has(t.id)) grupo = 'curso';
-      else if (['CERRADA', 'PRUEBA'].includes(t.ot.estado)) grupo = 'ocultas';
+      else if (['CERRADA', 'FACTURADA', 'PRUEBA'].includes(t.ot.estado)) grupo = 'ocultas';
       return { t, grupo };
     });
     const cuenta = g => items.filter(i => i.grupo === g).length;
@@ -61,7 +61,7 @@
   // ---------------- OT del taller: todas las OT por estado (solo consulta) ----------------
   let estadoTaller = 'ABIERTA', buscarTaller = '';
   const ESTADOS_TALLER = [['ABIERTA', 'Abiertas'], ['EN DIAGNÓSTICO', 'En diagnóstico'], ['EN REPARACIÓN', 'En reparación'],
-                          ['ESPERANDO REPUESTOS', 'Esperando repuestos'], ['FINALIZADA', 'Finalizadas'], ['CERRADA', 'Cerradas'], ['PRUEBA', 'Prueba']];
+                          ['ESPERANDO REPUESTOS', 'Esperando repuestos'], ['FINALIZADA', 'Finalizadas'], ['FACTURADA', 'Facturadas'], ['CERRADA', 'Cerradas'], ['PRUEBA', 'Prueba']];
   ruta(/^#\/taller$/, async main => {
     const r = await Api.rpc('ots_taller', { p_estado: estadoTaller });
     const conteos = (r && r.conteos) || {};
@@ -96,7 +96,7 @@
   ruta(/^#\/taller\/(\d+)$/, async (main, id) => {
     const o = await Api.rpc('ot_taller', { p_ot_id: Number(id) });
     if (!o) { main.innerHTML = '<div class="tarjeta">No se encontró la OT.</div>'; return; }
-    const activa = !['FINALIZADA', 'CERRADA', 'PRUEBA'].includes(o.estado);
+    const activa = !['FINALIZADA', 'FACTURADA', 'CERRADA', 'PRUEBA'].includes(o.estado);
     main.innerHTML = `
       <a class="volver" href="#/taller">${ICONOS.atras} OT del taller</a>
       <div class="encabezado"><div><h1>${esc(nroOT(o.numero))}</h1>
@@ -153,7 +153,7 @@
       .filter((a, i, arr) => arr.findIndex(b => (b.usuario && b.usuario.nombre) === (a.usuario && a.usuario.nombre)) === i);
     const abierto = registros.find(r => !r.fin);
     const terminadaYo = mia && mia.terminada_en;
-    const otCerrada = ['CERRADA', 'PRUEBA'].includes(ot.estado);
+    const otCerrada = ['CERRADA', 'FACTURADA', 'PRUEBA'].includes(ot.estado);
     const acumulado = () => registros.reduce((s, r) => s + ((r.fin ? new Date(r.fin) : new Date()) - new Date(r.inicio)), 0);
     const categoria = t.tempario && t.tempario.categoria ? t.tempario.categoria.nombre : '';
     const editable = mia && !otCerrada;

@@ -46,7 +46,7 @@ window.App = (() => {
   const veTodas = () => esOficina() || tiene('DEPOSITO');
   const limpiarCodigo = c => String(c || '').replace(/\s+/g, '').toUpperCase();
 
-  const ESTADOS_OT = ['ABIERTA', 'EN DIAGNÓSTICO', 'EN REPARACIÓN', 'ESPERANDO REPUESTOS', 'FINALIZADA', 'CERRADA', 'PRUEBA'];
+  const ESTADOS_OT = ['ABIERTA', 'EN DIAGNÓSTICO', 'EN REPARACIÓN', 'ESPERANDO REPUESTOS', 'FINALIZADA', 'FACTURADA', 'CERRADA', 'PRUEBA'];
   const TIPOS = ['LIVIANA', 'PESADA', 'MINIBÚS'];
   const ROLES = [['ADMINISTRADOR', 'Administrador'], ['OFICINA', 'Oficina'], ['DEPOSITO', 'Depósito'], ['MECANICO', 'Mecánico']];
   const MOTIVOS = [['FALTA DE REPUESTO', 'Falta de repuesto'], ['ESPERA DEL CLIENTE', 'Espera del cliente'],
@@ -58,7 +58,7 @@ window.App = (() => {
 
   function chipEstadoOT(e) {
     const c = { 'ABIERTA': '', 'EN DIAGNÓSTICO': 'ambar', 'EN REPARACIÓN': 'azul', 'ESPERANDO REPUESTOS': 'ambar',
-                'FINALIZADA': 'verde', 'CERRADA': 'oscuro', 'PRUEBA': '' }[e] || '';
+                'FINALIZADA': 'verde', 'FACTURADA': 'facturada', 'CERRADA': 'oscuro', 'PRUEBA': '' }[e] || '';
     return `<span class="chip ${c}">${esc(e)}</span>`;
   }
   function chipEstadoTarea(e) {
