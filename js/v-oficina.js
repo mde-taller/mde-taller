@@ -6,6 +6,10 @@
           decidirFaltante, pedirADeposito, esFaltaDeStock, esTareaButaca, resumenButacas, duracionTexto, ruta, ir, on, navegar } = App;
 
   const cacheTempario = {};
+  async function renumerarTareas(lista) {
+    const cambios = lista.map((t, i) => ({ id: t.id, n: i + 1, antes: Number(t.renglon) })).filter(x => x.antes !== x.n);
+    await Promise.all(cambios.map(x => Api.update('tareas_ot', { id: 'eq.' + x.id }, { renglon: x.n })));
+  }
   async function tempario(tipo) {
     if (!cacheTempario[tipo]) {
       cacheTempario[tipo] = await Api.select('tempario', {
@@ -681,6 +685,10 @@
     const otActiva = !['CERRADA', 'FACTURADA', 'PRUEBA'].includes(ot.estado);
     // OT facturada: no se tocan tareas ni repuestos (para cambiar algo, primero se cambia el estado).
     const editar = puede && ot.estado !== 'FACTURADA';
+    // Numeración de tareas siempre corrida (1, 2, 3…): si quedó un salto (p. ej. por una tarea borrada), se corrige.
+    if (editar && tareas.some((t, i) => Number(t.renglon) !== i + 1)) {
+      try { await renumerarTareas(tareas); tareas.forEach((t, i) => { t.renglon = i + 1; }); } catch (e) { /* se reintenta la próxima vez */ }
+    }
     const u = ot.unidad || {};
     const entrega = App.tiene('DEPOSITO') || esAdmin();
     const pendientesEntrega = reps.filter(r => r.estado !== 'ENTREGADO');
@@ -725,10 +733,13 @@
           <section class="tarjeta"><h2>Trabajos y servicios</h2>
             <div class="tabla-caja"><table><thead><tr><th>#</th><th style="min-width:180px">Tarea</th>${editar ? '<th></th>' : ''}<th class="num">Cant.</th><th class="num">Hs c/u</th><th class="num">Hs total</th><th>Estado</th><th>Mecánico</th>
               ${esAdmin() ? '<th>Horas reales</th>' : ''}</tr></thead><tbody>
-            ${tareas.length ? tareas.map(t => {
+            ${tareas.length ? tareas.map((t, i) => {
               const asig = t.asignaciones || [];
               const libres = mecs.filter(m => !asig.some(a => a.mecanico_id === m.id));
-              return `<tr><td>${t.renglon}</td>
+              return `<tr><td>${editar && tareas.length > 1 ? `<div class="orden-tarea">
+                  <button class="btn-flecha" data-mover="${t.id}" data-dir="-1" ${i === 0 ? 'disabled' : ''} aria-label="Subir tarea" title="Subir">▲</button>
+                  <span>${t.renglon}</span>
+                  <button class="btn-flecha" data-mover="${t.id}" data-dir="1" ${i === tareas.length - 1 ? 'disabled' : ''} aria-label="Bajar tarea" title="Bajar">▼</button></div>` : t.renglon}</td>
                 <td>${esc(t.descripcion)}${t.tempario && t.tempario.categoria ? `<div class="nota">${esc(t.tempario.categoria.nombre)}</div>` : '<div class="nota">A mano</div>'}
                   ${t.butacas.length ? `<div class="nota">Butacas: ${esc(resumenButacas(t.butacas))}</div>` : ''}
                   ${t.nota_pausa && t.estado !== 'HECHA' ? `<div class="nota" style="color:var(--rojo)"><b>Pausada:</b> ${esc(t.nota_pausa)}</div>` : ''}
@@ -929,8 +940,23 @@
       const ok = await confirmar('¿Quitar esta tarea de la OT? Se borran también sus tiempos registrados. Los repuestos quedan en la OT.',
         { titulo: 'Quitar tarea', textoOk: 'Quitar', peligro: true });
       if (!ok) return;
-      try { await Api.remove('tareas_ot', { id: 'eq.' + b.dataset.quitarTarea }); toast('Tarea quitada'); recargar(); }
+      try {
+        await Api.remove('tareas_ot', { id: 'eq.' + b.dataset.quitarTarea });
+        try { await renumerarTareas(tareas.filter(x => String(x.id) !== b.dataset.quitarTarea)); } catch (e) { /* se corrige al volver a abrir la OT */ }
+        toast('Tarea quitada'); recargar();
+      }
       catch (e) { toast(errMsg(e), 'error'); }
+    });
+    on(main, 'click', '[data-mover]', async (ev, b) => {
+      const i = tareas.findIndex(x => String(x.id) === b.dataset.mover);
+      const j = i + Number(b.dataset.dir);
+      if (i < 0 || j < 0 || j >= tareas.length) return;
+      main.querySelectorAll('[data-mover]').forEach(x => { x.disabled = true; });
+      const lista = tareas.slice();
+      [lista[i], lista[j]] = [lista[j], lista[i]];
+      try { await renumerarTareas(lista); }
+      catch (e) { toast(errMsg(e), 'error'); }
+      recargar();
     });
     on(main, 'click', '[data-quitar-rep]', async (ev, b) => {
       const ok = await confirmar('¿Quitar este repuesto de la OT? El stock vuelve.', { titulo: 'Quitar repuesto', textoOk: 'Quitar', peligro: true });
