@@ -124,6 +124,9 @@ main { flex: 1; min-width: 0; padding: 20px; max-width: 1200px; }
 .btn-grande { min-height: 56px; font-size: 18px; width: 100%; }
 .btn-chico { min-height: 36px; padding: 0 10px; font-size: 14px; }
 .btn-texto { border: 0; background: none; color: var(--naranja); padding: 0 6px; min-height: 36px; cursor: pointer; font-weight: 600; }
+.orden-tarea { display: flex; flex-direction: column; align-items: center; gap: 2px; font-weight: 600; }
+.btn-flecha { border: 1px solid var(--linea); background: var(--blanco); color: var(--naranja); border-radius: 6px; width: 32px; height: 28px; padding: 0; font-size: 12px; line-height: 1; cursor: pointer; }
+.btn-flecha:disabled { opacity: .3; cursor: default; }
 .volver { display: inline-flex; align-items: center; gap: 4px; min-height: 44px; text-decoration: none; font-weight: 600; color: var(--gris); }
 
 /* ---------- Formularios ---------- */
