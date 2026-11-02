@@ -723,8 +723,8 @@
       <div class="dos-col">
         <div class="principal">
           <section class="tarjeta"><h2>Trabajos y servicios</h2>
-            <div class="tabla-caja"><table><thead><tr><th>#</th><th style="min-width:180px">Tarea</th><th class="num">Cant.</th><th class="num">Hs c/u</th><th class="num">Hs total</th><th>Mecánicos</th><th>Estado</th>
-              ${esAdmin() ? '<th>Horas reales</th>' : ''}${editar ? '<th></th>' : ''}</tr></thead><tbody>
+            <div class="tabla-caja"><table><thead><tr><th>#</th><th style="min-width:180px">Tarea</th>${editar ? '<th></th>' : ''}<th class="num">Cant.</th><th class="num">Hs c/u</th><th class="num">Hs total</th><th>Estado</th><th>Mecánico</th>
+              ${esAdmin() ? '<th>Horas reales</th>' : ''}</tr></thead><tbody>
             ${tareas.length ? tareas.map(t => {
               const asig = t.asignaciones || [];
               const libres = mecs.filter(m => !asig.some(a => a.mecanico_id === m.id));
@@ -733,7 +733,9 @@
                   ${t.butacas.length ? `<div class="nota">Butacas: ${esc(resumenButacas(t.butacas))}</div>` : ''}
                   ${t.nota_pausa && t.estado !== 'HECHA' ? `<div class="nota" style="color:var(--rojo)"><b>Pausada:</b> ${esc(t.nota_pausa)}</div>` : ''}
                   ${editar && (t.butacas.length || esTareaButaca(t.descripcion)) && !['CERRADA', 'FACTURADA', 'PRUEBA'].includes(ot.estado) ? `<a href="#/butacas/${t.id}" class="nota">${t.butacas.length ? 'Cambiar butacas' : 'Marcar butacas en el plano'}</a>` : ''}</td>
+                ${editar ? `<td><div style="display:flex;flex-direction:column;align-items:flex-start"><button class="btn-texto" data-editar-tarea="${t.id}">Editar</button><button class="btn-texto" data-quitar-tarea="${t.id}">Quitar</button></div></td>` : ''}
                 <td class="num">${num(t.cantidad)}</td><td class="num">${num(t.horas)}</td><td class="num"><b>${num(t.horas_total)}</b></td>
+                <td>${chipEstadoTarea(t.estado)}</td>
                 <td>${asig.map(a => {
                   const corre = enCurso(t.id, a.mecanico_id);
                   const ctl = editar && otActiva && !a.terminada_en && t.estado !== 'HECHA';
@@ -747,9 +749,7 @@
                   ${!asig.length && !editar ? '<span class="nota">Sin asignar</span>' : ''}
                   ${pedTareas.filter(p => p.tarea_id === t.id).map(p => `<div class="nota" style="margin-top:4px">Pide hacerla: <b>${esc(p.mecanico ? p.mecanico.nombre : '')}</b>
                     <button class="btn-texto" data-asignar-pt="${p.id}">Asignar</button> <button class="btn-texto" data-rechazar-pt="${p.id}">Rechazar</button></div>`).join('')}</td>
-                <td>${chipEstadoTarea(t.estado)}</td>
-                ${esAdmin() ? `<td>${(realesPorTarea[t.id] || []).map(r => `<div class="nota">${esc(r.mecanico)}: ${num(r.horas_reales)} h${r.en_curso ? ' (en curso)' : ''}</div>`).join('') || '<span class="nota">—</span>'}</td>` : ''}
-                ${editar ? `<td style="white-space:nowrap"><button class="btn-texto" data-editar-tarea="${t.id}">Editar</button><button class="btn-texto" data-quitar-tarea="${t.id}">Quitar</button></td>` : ''}</tr>`;
+                ${esAdmin() ? `<td>${(realesPorTarea[t.id] || []).map(r => `<div class="nota">${esc(r.mecanico)}: ${num(r.horas_reales)} h${r.en_curso ? ' (en curso)' : ''}</div>`).join('') || '<span class="nota">—</span>'}</td>` : ''}</tr>`;
             }).join('') : `<tr><td colspan="9" class="vacio">Sin trabajos.</td></tr>`}
             </tbody></table></div>
             <div style="margin-top:10px;font-weight:600">Total horas (tempario): ${num(totalHoras)} h</div>
