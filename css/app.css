@@ -150,6 +150,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--azul); outl
 .chip.ambar { background: #F3C98B; color: #5A3300; }
 .chip.oscuro { background: var(--tinta); color: #fff; }
 .chip.facturada { background: #6D28D9; color: #fff; }
+.chip.celeste { background: #DBEAFE; color: #1E3A8A; }
 .chip-x { border: 0; background: none; cursor: pointer; font-weight: 700; margin-left: 4px; padding: 0 2px; color: inherit; }
 
 /* ---------- Tablas ---------- */
@@ -492,3 +493,19 @@ tr.bien td { background: #F1F9F3; }
   .chat-caja { height: calc(100dvh - 96px); border-radius: 0; border-left: 0; border-right: 0; }
   body.con-inferior .chat-caja { height: calc(100dvh - 96px - 72px); }
 }
+
+/* ---------- Compras: órdenes de compra ---------- */
+.oc-totales { margin: 12px 0 0 auto; max-width: 360px; }
+.oc-totales > div { display: flex; justify-content: space-between; gap: 16px; padding: 3px 0; font-variant-numeric: tabular-nums; }
+.oc-totales .total { border-top: 2px solid var(--tinta); margin-top: 4px; padding-top: 8px; font-size: 18px; }
+.hoja .oc-cab { display: flex; justify-content: space-between; align-items: flex-start; gap: 6mm; border-bottom: 2px solid #000; padding-bottom: 3mm; margin-bottom: 1mm; }
+.hoja .oc-razon { font-family: var(--titulo); font-size: 15pt; font-weight: 700; }
+.hoja .oc-titulo { text-align: right; flex-shrink: 0; }
+.hoja .oc-titulo h1 { text-align: right; margin: 0; }
+.hoja .oc-nro { font-size: 13pt; font-weight: 700; }
+.hoja .oc-novalida { display: inline-block; margin-top: 1.5mm; border: 2px solid #B91C1C; color: #B91C1C; font-weight: 700; padding: .5mm 2.5mm; }
+.hoja .oc-pie { display: flex; align-items: flex-start; gap: 6mm; }
+.hoja .oc-obs { flex: 1; min-width: 0; }
+.hoja .oc-leyenda { font-size: 9pt; margin-top: 2mm; }
+.hoja table.oc-tot { width: 80mm; flex: 0 0 auto; }
+.hoja .oc-tot td { text-align: right; white-space: nowrap; }

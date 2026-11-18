@@ -672,14 +672,16 @@
     const { ot, tareas, reps } = await cargarOT(id);
     if (!ot) { main.innerHTML = '<div class="tarjeta">No se encontró la OT.</div>'; return; }
     const puede = esOficina();
-    const [mecs, sols, reales, pedidos, pedTareas, registro, cronos] = await Promise.all([
+    const [mecs, sols, reales, pedidos, pedTareas, registro, cronos, compras] = await Promise.all([
       puede ? mecanicos() : Promise.resolve([]),
       puede ? Api.select('solicitudes', { select: selSolicitud, ot_id: 'eq.' + id, estado: 'eq.PENDIENTE', order: 'creado_en' }) : Promise.resolve([]),
       esAdmin() ? Api.select('horas_reales', { select: 'tarea_id,mecanico,horas_reales,en_curso', ot_id: 'eq.' + id }) : Promise.resolve([]),
       Api.select('pedidos_repuesto', { select: 'id,descripcion,codigo,cantidad,estado,nota,detalle,creado_en,pedidor:usuarios!pedidos_repuesto_pedido_por_fkey(nombre:nombre_visible)', ot_id: 'eq.' + id, order: 'creado_en.desc' }),
       puede ? Api.select('pedidos_tarea', { select: 'id,tarea_id,descripcion,mecanico:usuarios!pedidos_tarea_mecanico_id_fkey(nombre:nombre_visible)', ot_id: 'eq.' + id, estado: 'eq.PENDIENTE', order: 'creado_en' }) : Promise.resolve([]),
       esAdmin() ? Api.rpc('registro_ot', { p_ot_id: Number(id) }).catch(() => null) : Promise.resolve(null),
-      puede ? Api.rpc('cronometros_ot', { p_ot_id: Number(id) }).catch(() => []) : Promise.resolve([])
+      puede ? Api.rpc('cronometros_ot', { p_ot_id: Number(id) }).catch(() => []) : Promise.resolve([]),
+      // Órdenes de compra de la OT (si la base todavía no tiene compras, la sección no aparece).
+      window.Compras ? Compras.datosOT(id).catch(() => null) : Promise.resolve(null)
     ]);
     const enCurso = (tareaId, mecId) => cronos.some(c => c.tarea_id === tareaId && c.mecanico_id === mecId);
     const otActiva = !['CERRADA', 'FACTURADA', 'PRUEBA'].includes(ot.estado);
@@ -791,10 +793,11 @@
             ${pedidos.length ? `<div class="tabla-caja" style="margin-bottom:12px"><table><thead><tr><th>Repuesto pedido</th><th class="num">Cant.</th><th>Pidió</th><th>Estado</th><th></th></tr></thead><tbody>
               ${pedidos.map(p => `<tr><td>${esc(p.descripcion)}${p.codigo ? `<div class="nota">${esc(p.codigo)}</div>` : '<div class="nota">No está en la lista</div>'}${p.detalle ? `<div class="nota">Nota: ${esc(p.detalle)}</div>` : ''}</td>
                 <td class="num">${num(p.cantidad)}</td><td>${esc(p.pedidor ? p.pedidor.nombre : '')}<div class="nota">${fechaHora(p.creado_en)}</div></td>
-                <td>${App.chipPedido(p)}</td><td>${['CERRADA', 'FACTURADA', 'PRUEBA'].includes(ot.estado) ? '' : App.botonesPedido(p)}</td></tr>`).join('')}
+                <td>${App.chipPedido(p)}${compras ? Compras.chipPedidoOT(compras, p.id) : ''}</td><td>${['CERRADA', 'FACTURADA', 'PRUEBA'].includes(ot.estado) ? '' : App.botonesPedido(p)}</td></tr>`).join('')}
               </tbody></table></div>` : ''}
             ${pausasViejas.map(p => `<div class="nota" style="margin-bottom:4px">• ${esc(textoMotivo(p.motivo))}${p.detalle ? ' (' + esc(p.detalle) + ')' : ''}: ${hora(p.inicio)} → ${hora(p.fin)} · pausó ${esc(p.pausador ? p.pausador.nombre : '')}, reanudó ${esc(p.reanudador ? p.reanudador.nombre : '')}</div>`).join('')}
           </section>` : ''}
+          ${compras ? Compras.seccionOT(compras, ot, pedidos) : ''}
           ${registro ? `<section class="tarjeta no-imprimir"><h2>Registro de la OT <span class="chip oscuro" style="vertical-align:middle">Solo Administrador</span></h2>
             <div class="nota" style="margin-bottom:10px">Todo lo que pasó en la OT, en orden: estados, pausas con su motivo y duración, tramos de trabajo de cada mecánico, repuestos y pedidos.</div>
             <div id="o-registro"></div></section>` : ''}

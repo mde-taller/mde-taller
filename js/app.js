@@ -2,7 +2,7 @@
 window.App = (() => {
   const cfg = window.MDE_CONFIG;
   const st = {
-    usuarioId: null, nombre: '', roles: [], prefijo: 'OT-',
+    usuarioId: null, nombre: '', roles: [], prefijo: 'OT-', prefijoOC: 'OC-',
     noLeidos: 0, limpiar: [], vistas: {}, rutaActual: ''
   };
 
@@ -71,7 +71,11 @@ window.App = (() => {
     if (!e) return '';
     const m = e.message || String(e);
     if (/row-level security|permission denied/i.test(m)) return 'No tenés permiso para hacer esto.';
+    if (/oc_ot_segun_destino/i.test(m)) return 'La OT tiene órdenes de compra: anulalas antes de eliminar la OT.';
+    if (/ordenes_compra_proveedor_id_fkey/i.test(m)) return 'El proveedor tiene órdenes de compra: desactivalo en lugar de eliminarlo.';
     if (/duplicate key/i.test(m)) {
+      if (/proveedores_nombre/i.test(m)) return 'Ya existe un proveedor con ese nombre.';
+      if (/proveedores_cuit/i.test(m)) return 'Ya existe un proveedor con ese CUIT.';
       if (/dominio/i.test(m)) return 'Ese dominio ya está cargado.';
       if (/tempario/i.test(m)) return 'Esa tarea ya existe para ese tipo y categoría.';
       if (/repuestos_pkey|codigo_limpio/i.test(m)) return 'Ya existe un repuesto con ese código.';
@@ -450,6 +454,9 @@ window.App = (() => {
         items.push(['#/clientes', 'Clientes y unidades']);
       }
       items.push(['#/stock', 'Stock y repuestos']);
+      items.push(['grupo', 'Compras']);
+      items.push(['#/compras', 'Órdenes de compra']);
+      items.push(['#/proveedores', 'Proveedores']);
     }
     if (esAdmin()) {
       items.push(['grupo', 'Administración']);
@@ -501,7 +508,8 @@ window.App = (() => {
   function marcarActivo(hash) {
     const base = '#/' + (hash.split('/')[1] || '');
     const alias = { '#/tarea': '#/tareas', '#/escanear': '#/tareas', '#/pausar': '#/tareas', '#/solicitar': '#/tareas',
-                    '#/ot': '#/ots', '#/imprimir': '#/ots', '#/solicitud-ot': '#/solicitudes', '#/ingreso': '#/stock' };
+                    '#/ot': '#/ots', '#/imprimir': '#/ots', '#/solicitud-ot': '#/solicitudes', '#/ingreso': '#/stock',
+                    '#/oc': '#/compras', '#/oc-nueva': '#/compras' };
     document.querySelectorAll('.lateral a, .inferior a').forEach(a => {
       a.classList.toggle('activo', a.getAttribute('href') === (alias[base] || base));
     });
@@ -636,6 +644,8 @@ window.App = (() => {
       st.roles = roles.map(r => r.rol);
       const pref = cfgFilas.find(c => c.clave === 'prefijo_ot');
       if (pref) st.prefijo = pref.valor || '';
+      const prefOC = cfgFilas.find(c => c.clave === 'prefijo_oc');
+      if (prefOC) st.prefijoOC = prefOC.valor || '';
       if (yo[0] && yo[0].activo === false) { await Api.logout(); return pantallaIngreso('Tu usuario está desactivado.'); }
       if (!st.roles.length) {
         await Api.logout();
@@ -662,14 +672,16 @@ window.App = (() => {
 
   // ---------------- Vista: Avisos ----------------
   ruta(/^#\/avisos$/, async main => {
-    const avisos = await Api.select('avisos', { select: 'id,tipo,mensaje,ot_id,leido,creado_en', order: 'creado_en.desc', limit: 100 });
+    // oc_id existe desde el paso 26 de la base; si todavía no se corrió, se piden los avisos sin él.
+    const avisos = await Api.select('avisos', { select: 'id,tipo,mensaje,ot_id,oc_id,leido,creado_en', order: 'creado_en.desc', limit: 100 })
+      .catch(() => Api.select('avisos', { select: 'id,tipo,mensaje,ot_id,leido,creado_en', order: 'creado_en.desc', limit: 100 }));
     main.innerHTML = `
       <div class="encabezado"><div><h1>Avisos</h1><div class="sub">${avisos.filter(a => !a.leido).length} sin leer</div></div>
         <div class="acciones">${avisos.some(a => !a.leido) ? '<button class="btn" data-accion="leer-todo">Marcar todo como leído</button>' : ''}</div></div>
       <div class="tarjeta">${avisos.length ? avisos.map(a => `
         <div class="aviso-item ${a.leido ? '' : 'nuevo'}"><span class="punto"></span>
           <div><div>${esc(a.mensaje)}</div>
-          <div class="cuando">${fechaHora(a.creado_en)}${a.ot_id && veTodas() ? ` · <a href="#/ot/${a.ot_id}">Ver OT</a>` : ''}</div></div></div>`).join('')
+          <div class="cuando">${fechaHora(a.creado_en)}${a.oc_id && veTodas() ? ` · <a href="#/oc/${a.oc_id}">Ver OC</a>` : ''}${a.ot_id && veTodas() ? ` · <a href="#/ot/${a.ot_id}">Ver OT</a>` : ''}</div></div></div>`).join('')
         : '<div class="vacio">No tenés avisos.</div>'}</div>`;
     on(main, 'click', '[data-accion=leer-todo]', async () => {
       try { await Api.update('avisos', { leido: 'is.false' }, { leido: true }); toast('Avisos marcados como leídos'); navegar(); }
@@ -685,7 +697,7 @@ window.App = (() => {
   return {
     st, cfg, esc, num, parseNum, nroOT, conNumero, fecha, fechaHora, hoyISO, horaActual, duracion, duracionTexto, tiene, esAdmin, esOficina,
     veTodas, limpiarCodigo, chipEstadoOT, chipEstadoTarea, errMsg, toast, modal, confirmar, ICONOS, ESTADOS_OT,
-    TIPOS, ROLES, MOTIVOS, textoMotivo, pausaAbierta, chipPausa, autocompletarRepuesto,
+    TIPOS, ROLES, MOTIVOS, textoMotivo, pausaAbierta, chipPausa, autocompletar, autocompletarRepuesto,
     autocompletarUnidad, unidadExacta, decidirFaltante, pedirADeposito, esFaltaDeStock,
     TRABAJOS_BUTACA, esTareaButaca, ordenButaca, nombreButaca, textoTrabajos, resumenButacas,
     chipPedido, botonesPedido, accionPedido, ruta, ir, on, navegar, actualizarAvisos, actualizarChat, arrancar

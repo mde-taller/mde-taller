@@ -388,7 +388,9 @@
 
   // ---------------- Detalle de un ingreso de stock (ver, modificar, historial de cambios) ----------------
   ruta(/^#\/ingreso\/(\d+)$/, async (main, id) => {
-    const edita = tiene('DEPOSITO') || esAdmin();
+    // Si el ingreso viene de una orden de compra, se corrige desde la OC (anulando la recepción).
+    const deOC = (await Api.select('ordenes_compra_recepciones', { select: 'oc:ordenes_compra!ordenes_compra_recepciones_oc_id_fkey(id,numero)', ingreso_id: 'eq.' + id }).catch(() => []))[0];
+    const edita = (tiene('DEPOSITO') || esAdmin()) && !deOC;
     const filas = await Api.select('ingresos_stock', {
       select: 'id,creado_en,observacion,usuario_nombre,modificado_en,creador:usuarios!ingresos_stock_creado_por_fkey(nombre),' +
               'modificador:usuarios!ingresos_stock_modificado_por_fkey(nombre),' +
@@ -406,6 +408,8 @@
         <div class="sub">${fechaHora(ing.creado_en)} · cargó ${esc(ing.creador ? ing.creador.nombre : (ing.usuario_nombre || '—'))}
           ${ing.modificado_en ? ` · modificado ${fechaHora(ing.modificado_en)}${ing.modificador ? ' por ' + esc(ing.modificador.nombre) : ''}` : ''}</div></div>
         ${edita ? '<div class="acciones"><button class="btn btn-peligro" data-accion="eliminar">Eliminar ingreso</button></div>' : ''}</div>
+      ${deOC && deOC.oc ? `<div class="aviso-box">Este ingreso viene de la <a href="#/oc/${deOC.oc.id}"><b>${esc(window.Compras ? Compras.nroOC(deOC.oc.numero) : deOC.oc.numero)}</b></a>.
+        Para corregirlo, anulá la recepción desde la orden de compra.</div>` : ''}
       <section class="tarjeta"><h2>Remito / observación</h2>
         ${edita ? `<form id="f-obs" style="display:flex;gap:8px;flex-wrap:wrap"><input id="g-obs" value="${esc(ing.observacion || '')}" placeholder="Remito, proveedor…" style="flex:1 1 260px">
           <button class="btn" type="submit">Guardar</button></form>` : `<div>${esc(ing.observacion || '—')}</div>`}
