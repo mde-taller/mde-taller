@@ -479,7 +479,7 @@ window.Compras = (() => {
           ${libres.length > 1 ? '<button class="btn btn-chico" data-ped-todos>Agregar todos</button>' : ''}</div>
         ${libres.map(p => `<div class="repuesto-fila"><div class="info"><div class="desc">${esc(p.descripcion)} × ${num(p.cantidad)}</div>
             <div class="cod">${p.codigo ? esc(p.codigo) : 'No está en la lista de repuestos'} · pidió ${esc(p.pedidor ? p.pedidor.nombre : '')} ${fechaHora(p.creado_en)}${p.detalle ? ' · ' + esc(p.detalle) : ''}</div></div>
-          <button class="btn btn-chico" data-ped-agregar="${p.id}">Agregar</button></div>`).join('') || '<div class="nota">Todos los pedidos pendientes de esta OT ya están en una orden de compra.</div>'}
+          <button class="btn btn-chico" data-ped-agregar="${p.id}">Agregar</button></div>`).join('') || '<div class="nota">No quedan pedidos de esta OT sin orden de compra.</div>'}
         ${enOtra.length ? `<div class="nota" style="margin-top:8px">Ya están en otra OC: ${enOtra.map(p => `${esc(p.descripcion)} (<a href="#/oc/${p.enOC.id}">${esc(nroOC(p.enOC.numero))}</a>)`).join(' · ')}</div>` : ''}`;
     }
     async function agregarPedido(p) {
