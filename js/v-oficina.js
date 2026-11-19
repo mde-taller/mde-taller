@@ -668,11 +668,66 @@
     return { ot: ots[0], tareas, reps };
   }
 
+  // ---------------- Importes de la OT (paso 28 de la base) ----------------
+  // Mano de obra = horas de tempario × valor hora del cliente. Repuestos: precio a mano, de lista
+  // o último costo + recargo. Todo sin IVA; el IVA (21 %) va al pie. Se calcula en centavos.
+  const IVA_OT = 21;
+  const pesos = n => '$ ' + Number(n || 0).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const cent = x => Math.round(Number(x || 0) * 100);
+  const AVISO_PASO28 = '<div class="nota" style="margin-top:8px">Para ver precios en la OT falta correr en Supabase el paso 28 de la base de datos (<b>base-de-datos/28_precios_ot.sql</b>).</div>';
+  async function cargarImportes(id) {
+    try { return await Api.rpc('importes_ot', { p_ot_id: Number(id) }); }
+    catch (e) { return /importes_ot|schema cache|Could not find/i.test(errMsg(e)) ? null : { error: errMsg(e) }; }
+  }
+  function calcularImportes(tareas, reps, imp) {
+    const vh = imp && imp.valor_hora != null ? Number(imp.valor_hora) : null;
+    const porId = new Map(((imp && imp.repuestos) || []).map(x => [x.id, x]));
+    const tareasImp = new Map(tareas.map(t => [t.id, vh == null ? null : Math.round(cent(t.horas_total) * cent(vh) / 100) / 100]));
+    const repsImp = new Map(reps.map(r => {
+      const p = porId.get(r.id) || {};
+      const precio = p.precio == null ? null : Number(p.precio);
+      return [r.id, Object.assign({}, p, { precio, subtotal: precio == null ? null : Math.round(cent(r.cantidad) * cent(precio) / 100) / 100 })];
+    }));
+    const suma = valores => valores.reduce((a, x) => a + (x == null ? 0 : cent(x)), 0) / 100;
+    const mo = suma([...tareasImp.values()]);
+    const rep = suma([...repsImp.values()].map(x => x.subtotal));
+    const sinPrecio = [...repsImp.values()].filter(x => x.precio == null).length;
+    return { vh, tareasImp, repsImp, mo, rep, sinPrecio };
+  }
+  // Totales de lo que se muestra (mano de obra y/o repuestos) + IVA 21 %.
+  function totalesImportes(c, conMO, conRep) {
+    const base = (conMO ? cent(c.mo) : 0) + (conRep ? cent(c.rep) : 0);
+    const iva = Math.round(base * IVA_OT / 100);
+    return { neto: base / 100, iva: iva / 100, total: (base + iva) / 100 };
+  }
+  const textoOrigenPrecio = (x, imp) => {
+    if (!x || x.precio == null) return 'Sin precio';
+    if (x.origen === 'A MANO') return 'Cargado a mano';
+    if (x.origen === 'AL FACTURAR') return 'Fijado al facturar';
+    if (x.origen === 'LISTA') return 'Lista de precios';
+    if (x.origen === 'COSTO') return `Último costo ${x.costo != null ? pesos(x.costo) + ' ' : ''}+ ${num(imp.recargo_repuestos)} %`;
+    return '';
+  };
+  const textoExport = imp => imp.mostrar_mano_obra || imp.mostrar_precios_repuestos
+    ? `En la OT impresa / PDF salen ${[imp.mostrar_mano_obra && 'la mano de obra', imp.mostrar_precios_repuestos && 'los precios de repuestos'].filter(Boolean).join(' y ')}, con IVA ${IVA_OT} % y total al pie.`
+    : 'En la OT impresa / PDF no salen precios. Para que salgan, marcá las casillas de Trabajos y servicios o de Repuestos.';
+  // Precio escrito a mano: "12.500,50", "12500,5", "12.500" (punto de miles) o "12500.5".
+  const parsePrecio = s => {
+    s = String(s == null ? '' : s).replace(/\$/g, '').replace(/\s+/g, '');
+    if (!s) return null;
+    if (s.includes(',')) return Number(s.replace(/\./g, '').replace(',', '.'));
+    if (/^\d{1,3}(\.\d{3})+$/.test(s)) return Number(s.replace(/\./g, ''));
+    return Number(s);
+  };
+  const precioTexto = n => n == null || isNaN(n) ? '' : Number(n).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const textoValorHora = (imp, ot) => imp.valor_hora == null ? '' : pesos(imp.valor_hora) +
+    (imp.valor_hora_fijado ? ' (fijado al facturar)' : Number(imp.recargo_cliente) ? ` (${pesos(imp.valor_hora_base)} + ${num(imp.recargo_cliente)} % ${ot.cliente ? ot.cliente.nombre : ''})` : '');
+
   ruta(/^#\/ot\/(\d+)$/, async (main, id) => {
     const { ot, tareas, reps } = await cargarOT(id);
     if (!ot) { main.innerHTML = '<div class="tarjeta">No se encontró la OT.</div>'; return; }
     const puede = esOficina();
-    const [mecs, sols, reales, pedidos, pedTareas, registro, cronos, compras] = await Promise.all([
+    const [mecs, sols, reales, pedidos, pedTareas, registro, cronos, compras, imp] = await Promise.all([
       puede ? mecanicos() : Promise.resolve([]),
       puede ? Api.select('solicitudes', { select: selSolicitud, ot_id: 'eq.' + id, estado: 'eq.PENDIENTE', order: 'creado_en' }) : Promise.resolve([]),
       esAdmin() ? Api.select('horas_reales', { select: 'tarea_id,mecanico,horas_reales,en_curso', ot_id: 'eq.' + id }) : Promise.resolve([]),
@@ -681,8 +736,13 @@
       esAdmin() ? Api.rpc('registro_ot', { p_ot_id: Number(id) }).catch(() => null) : Promise.resolve(null),
       puede ? Api.rpc('cronometros_ot', { p_ot_id: Number(id) }).catch(() => []) : Promise.resolve([]),
       // Órdenes de compra de la OT (si la base todavía no tiene compras, la sección no aparece).
-      window.Compras ? Compras.datosOT(id).catch(() => null) : Promise.resolve(null)
+      window.Compras ? Compras.datosOT(id).catch(() => null) : Promise.resolve(null),
+      // Precios (solo Oficina y Administrador).
+      puede ? cargarImportes(id) : Promise.resolve(null)
     ]);
+    const verPrecios = !!(imp && !imp.error);
+    const imps = verPrecios ? calcularImportes(tareas, reps, imp) : null;
+    const casilla = (campo, texto) => `<label class="check" style="font-weight:500;font-size:.9rem"><input type="checkbox" data-mostrar="${campo}" ${imp[campo] ? 'checked' : ''}> ${texto}</label>`;
     const enCurso = (tareaId, mecId) => cronos.some(c => c.tarea_id === tareaId && c.mecanico_id === mecId);
     const otActiva = !['CERRADA', 'FACTURADA', 'PRUEBA'].includes(ot.estado);
     // OT facturada: no se tocan tareas ni repuestos (para cambiar algo, primero se cambia el estado).
@@ -732,8 +792,10 @@
           <button class="btn btn-peligro btn-chico" data-rechazar="${i}">Rechazar</button></div>`).join('')}</section>` : ''}
       <div class="dos-col">
         <div class="principal">
-          <section class="tarjeta"><h2>Trabajos y servicios</h2>
-            <div class="tabla-caja"><table><thead><tr><th>#</th><th style="min-width:180px">Tarea</th>${editar ? '<th></th>' : ''}<th class="num">Cant.</th><th class="num">Hs c/u</th><th class="num">Hs total</th><th>Estado</th><th>Mecánico</th>
+          <section class="tarjeta">
+            <div class="encabezado" style="margin-bottom:10px"><h2>Trabajos y servicios</h2>
+              ${verPrecios ? casilla('mostrar_mano_obra', 'Mostrar mano de obra en la OT impresa') : ''}</div>
+            <div class="tabla-caja"><table><thead><tr><th>#</th><th style="min-width:180px">Tarea</th>${editar ? '<th></th>' : ''}<th class="num">Cant.</th><th class="num">Hs c/u</th><th class="num">Hs total</th>${verPrecios ? '<th class="num">Importe</th>' : ''}<th>Estado</th><th>Mecánico</th>
               ${esAdmin() ? '<th>Horas reales</th>' : ''}</tr></thead><tbody>
             ${tareas.length ? tareas.map((t, i) => {
               const asig = t.asignaciones || [];
@@ -748,6 +810,7 @@
                   ${editar && (t.butacas.length || esTareaButaca(t.descripcion)) && !['CERRADA', 'FACTURADA', 'PRUEBA'].includes(ot.estado) ? `<a href="#/butacas/${t.id}" class="nota">${t.butacas.length ? 'Cambiar butacas' : 'Marcar butacas en el plano'}</a>` : ''}</td>
                 ${editar ? `<td><div style="display:flex;flex-direction:column;align-items:flex-start"><button class="btn-texto" data-editar-tarea="${t.id}">Editar</button><button class="btn-texto" data-quitar-tarea="${t.id}">Quitar</button></div></td>` : ''}
                 <td class="num">${num(t.cantidad)}</td><td class="num">${num(t.horas)}</td><td class="num"><b>${num(t.horas_total)}</b></td>
+                ${verPrecios ? `<td class="num" style="white-space:nowrap">${imps.tareasImp.get(t.id) == null ? '—' : pesos(imps.tareasImp.get(t.id))}</td>` : ''}
                 <td>${chipEstadoTarea(t.estado)}</td>
                 <td>${asig.map(a => {
                   const corre = enCurso(t.id, a.mecanico_id);
@@ -763,9 +826,13 @@
                   ${pedTareas.filter(p => p.tarea_id === t.id).map(p => `<div class="nota" style="margin-top:4px">Pide hacerla: <b>${esc(p.mecanico ? p.mecanico.nombre : '')}</b>
                     <button class="btn-texto" data-asignar-pt="${p.id}">Asignar</button> <button class="btn-texto" data-rechazar-pt="${p.id}">Rechazar</button></div>`).join('')}</td>
                 ${esAdmin() ? `<td>${(realesPorTarea[t.id] || []).map(r => `<div class="nota">${esc(r.mecanico)}: ${num(r.horas_reales)} h${r.en_curso ? ' (en curso)' : ''}</div>`).join('') || '<span class="nota">—</span>'}</td>` : ''}</tr>`;
-            }).join('') : `<tr><td colspan="9" class="vacio">Sin trabajos.</td></tr>`}
+            }).join('') : `<tr><td colspan="10" class="vacio">Sin trabajos.</td></tr>`}
             </tbody></table></div>
-            <div style="margin-top:10px;font-weight:600">Total horas (tempario): ${num(totalHoras)} h</div>
+            <div style="margin-top:10px;font-weight:600">Total horas (tempario): ${num(totalHoras)} h${verPrecios && imps.vh != null
+              ? ` · Mano de obra: ${pesos(imps.mo)} <span class="nota" style="font-weight:400">sin IVA · valor hora ${esc(textoValorHora(imp, ot))}</span>` : ''}</div>
+            ${verPrecios && imps.vh == null ? `<div class="nota">Falta el valor hora de mano de obra: lo fija el Administrador en Tempario.</div>` : ''}
+            ${puede && imp && imp.error ? `<div class="error-box" style="margin-top:8px">No se pudieron cargar los precios: ${esc(imp.error)}</div>` : ''}
+            ${puede && !imp && esAdmin() ? AVISO_PASO28 : ''}
             ${editar ? `<form id="f-agregar-tarea" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
               <input id="o-tarea" list="dl-o-tareas" placeholder="Agregar tarea: buscá en el tempario o escribila" autocomplete="off" style="flex:3 1 260px">
               <datalist id="dl-o-tareas">${temp.map(x => `<option value="${esc(claveTarea(x))}">${num(x.horas)} h</option>`).join('')}</datalist>
@@ -774,21 +841,36 @@
           </section>
           <section class="tarjeta">
             <div class="encabezado" style="margin-bottom:10px"><h2>Repuestos</h2>
-              ${entrega && pendientesEntrega.length ? `<button class="btn btn-verde btn-chico" data-entregar-todos>Marcar entregados (${pendientesEntrega.length})</button>` : ''}</div>
-            <div class="tabla-caja"><table><thead><tr><th>Código</th><th>Repuesto</th><th class="num">Cantidad</th><th>Tarea</th><th>Cargó</th><th>Entrega</th>${editar ? '<th></th>' : ''}</tr></thead><tbody>
+              <div class="acciones">${verPrecios ? casilla('mostrar_precios_repuestos', 'Mostrar precios en la OT impresa') : ''}
+              ${entrega && pendientesEntrega.length ? `<button class="btn btn-verde btn-chico" data-entregar-todos>Marcar entregados (${pendientesEntrega.length})</button>` : ''}</div></div>
+            <div class="tabla-caja"><table><thead><tr><th>Código</th><th>Repuesto</th><th class="num">Cantidad</th>${verPrecios ? '<th class="num">Precio unit. sin IVA</th><th class="num">Subtotal</th>' : ''}<th>Tarea</th><th>Cargó</th><th>Entrega</th>${editar ? '<th></th>' : ''}</tr></thead><tbody>
               ${reps.length ? reps.map(r => `<tr><td>${esc(r.codigo)}</td><td>${esc(r.repuesto ? r.repuesto.descripcion : '')}</td><td class="num">${num(r.cantidad)}</td>
+                ${verPrecios ? (x => `<td class="num" style="white-space:nowrap">${x.precio == null ? '<span class="nota">—</span>' : pesos(x.precio)}
+                    <div class="nota" ${x.precio == null ? 'style="color:var(--rojo)"' : ''}>${esc(textoOrigenPrecio(x, imp))}</div>
+                    ${editar ? `<button class="btn-texto" data-precio-rep="${r.id}">${x.precio == null ? 'Poner precio' : 'Cambiar'}</button>` : ''}</td>
+                  <td class="num" style="white-space:nowrap">${x.subtotal == null ? '—' : pesos(x.subtotal)}</td>`)(imps.repsImp.get(r.id)) : ''}
                 <td>${r.tarea_id ? '#' + renglonDe.get(r.tarea_id) : '—'}</td><td>${esc(r.cargador ? r.cargador.nombre : '')}<div class="nota">${fechaHora(r.cargado_en)}</div></td>
                 <td>${r.estado === 'ENTREGADO'
                   ? `<span class="chip verde">Entregado</span><div class="nota">${esc(r.entregador ? r.entregador.nombre : '')} ${fechaHora(r.entregado_en)}</div>`
                   : `<span class="chip ambar">Pendiente</span>${entrega ? ` <button class="btn-texto" data-entregar="${r.id}">Entregar</button>` : ''}`}</td>
                 ${editar ? `<td><button class="btn-texto" data-quitar-rep="${r.id}">Quitar</button></td>` : ''}</tr>`).join('')
-                : `<tr><td colspan="7" class="vacio">Sin repuestos cargados.</td></tr>`}
+                : `<tr><td colspan="9" class="vacio">Sin repuestos cargados.</td></tr>`}
             </tbody></table></div>
+            ${verPrecios && reps.length ? `<div style="margin-top:10px;font-weight:600">Repuestos: ${pesos(imps.rep)} <span class="nota" style="font-weight:400">sin IVA</span></div>
+              ${imps.sinPrecio ? `<div class="nota" style="color:var(--rojo)">${imps.sinPrecio === 1 ? 'Hay 1 repuesto sin precio' : `Hay ${imps.sinPrecio} repuestos sin precio`}: no tiene precio de lista${imp.recargo_repuestos == null ? ' (y todavía no hay % de recargo sobre el costo)' : ' ni costo de compra'}. Ponéselo con "Poner precio".</div>` : ''}` : ''}
             ${editar ? `<form id="f-agregar-rep" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
               <input id="o-rep-cod" placeholder="Código o descripción" style="flex:2 1 220px">
               <input id="o-rep-cant" placeholder="Cantidad" inputmode="decimal" style="flex:0 1 110px" autocomplete="off">
               <button class="btn" type="submit">Agregar repuesto</button></form>` : ''}
           </section>
+          ${verPrecios ? (tt => `<section class="tarjeta"><h2>Importes</h2>
+            <div class="oc-totales" style="margin-top:0">
+              <div><span>Mano de obra</span><b>${pesos(imps.mo)}</b></div>
+              <div><span>Repuestos${imps.sinPrecio ? ` <span class="nota" style="color:var(--rojo)">(${imps.sinPrecio} sin precio)</span>` : ''}</span><b>${pesos(imps.rep)}</b></div>
+              <div><span>Subtotal sin IVA</span><b>${pesos(tt.neto)}</b></div>
+              <div><span>IVA ${IVA_OT} %</span><b>${pesos(tt.iva)}</b></div>
+              <div class="total"><span>Total</span><b>${pesos(tt.total)}</b></div></div>
+            <div class="nota" id="o-nota-export" style="margin-top:10px">${esc(textoExport(imp))}</div></section>`)(totalesImportes(imps, true, true)) : ''}
           ${pedidos.length || pausasViejas.length ? `<section class="tarjeta"><h2>Pausas y pedidos de repuesto</h2>
             ${pedidos.length ? `<div class="tabla-caja" style="margin-bottom:12px"><table><thead><tr><th>Repuesto pedido</th><th class="num">Cant.</th><th>Pidió</th><th>Estado</th><th></th></tr></thead><tbody>
               ${pedidos.map(p => `<tr><td>${esc(p.descripcion)}${p.codigo ? `<div class="nota">${esc(p.codigo)}</div>` : '<div class="nota">No está en la lista</div>'}${p.detalle ? `<div class="nota">Nota: ${esc(p.detalle)}</div>` : ''}</td>
@@ -857,6 +939,42 @@
 
     if (!puede) return;
     const recargar = () => navegar();
+    // Casillas: qué precios salen en la OT impresa (se guardan en la OT; se pueden cambiar aunque esté facturada).
+    on(main, 'change', '[data-mostrar]', async (ev, cb) => {
+      const campo = cb.dataset.mostrar;
+      try {
+        await Api.update('ordenes_trabajo', { id: 'eq.' + id }, { [campo]: cb.checked });
+        imp[campo] = cb.checked;
+        const n = document.getElementById('o-nota-export');
+        if (n) n.textContent = textoExport(imp);
+        toast((campo === 'mostrar_mano_obra' ? 'Mano de obra' : 'Precios de repuestos') + (cb.checked ? ': salen en la OT impresa' : ': no salen en la OT impresa'));
+      } catch (e) { toast(errMsg(e), 'error'); cb.checked = !cb.checked; }
+    });
+    on(main, 'click', '[data-precio-rep]', async (ev, b) => {
+      const r = reps.find(x => String(x.id) === b.dataset.precioRep);
+      if (!r) return;
+      const x = imps.repsImp.get(r.id) || {};
+      const desc = r.repuesto ? r.repuesto.descripcion : r.codigo;
+      const propuesto = x.propuesto != null
+        ? `${pesos(x.propuesto)} (${x.origen_propuesto === 'LISTA' ? 'lista de precios' : 'último costo + ' + num(imp.recargo_repuestos) + ' %'})` : '';
+      const manual = x.origen === 'A MANO' || x.origen === 'AL FACTURAR';
+      const v = await modal({ titulo: 'Precio de ' + desc, textoOk: 'Guardar',
+        html: `<p class="nota">${esc(r.codigo)} · cantidad ${num(r.cantidad)}${x.costo != null ? ' · último costo de compra ' + pesos(x.costo) + ' sin IVA' : ''}</p>
+          ${propuesto ? `<p class="nota">Precio propuesto: <b>${esc(propuesto)}</b>.${manual ? ' Dejá el precio vacío para volver a usarlo.' : ''}</p>` : ''}`,
+        campos: [
+          { id: 'precio', label: 'Precio unitario sin IVA', valor: precioTexto(x.precio), inputmode: 'decimal', obligatorio: !propuesto || !manual },
+          { id: 'lista', label: '¿Guardarlo también en la lista de precios?', tipo: 'select', valor: 'NO',
+            opciones: [['NO', 'No, solo en esta OT'], ['SI', 'Sí, que lo usen también las próximas OT']] }] });
+      if (!v) return;
+      const p = parsePrecio(v.precio);
+      if (p !== null && !(p >= 0)) return toast('El precio no es válido', 'error');
+      if (v.lista === 'SI' && !(p > 0)) return toast('Para guardarlo en la lista de precios escribí un precio mayor a cero', 'error');
+      try {
+        await Api.rpc('fijar_precio_repuesto_ot', { p_id: r.id, p_precio: p, p_a_lista: v.lista === 'SI' });
+        toast(p === null ? 'Volvió al precio propuesto' : v.lista === 'SI' ? 'Precio guardado en la OT y en la lista de precios' : 'Precio guardado');
+        recargar();
+      } catch (e) { toast(errMsg(e), 'error'); }
+    });
     document.getElementById('o-estado').addEventListener('change', async ev => {
       const nuevo = ev.target.value;
       try {
@@ -1044,10 +1162,16 @@
   const nrosMecanicos = t => [...new Set((t.asignaciones || []).map(a => a.usuario ? (a.usuario.numero ? String(a.usuario.numero) : a.usuario.nombre) : '').filter(Boolean))].join(' / ');
 
   ruta(/^#\/imprimir\/(\d+)$/, async (main, id) => {
-    const { ot, tareas, reps } = await cargarOT(id);
+    const [{ ot, tareas, reps }, imp] = await Promise.all([cargarOT(id), cargarImportes(id)]);
     if (!ot) { main.innerHTML = '<div class="tarjeta">No se encontró la OT.</div>'; return; }
     const u = ot.unidad || {};
     const total = tareas.reduce((a, t) => a + Number(t.horas_total || 0), 0);
+    // Precios: salen según las casillas de la OT.
+    const hayImp = !!(imp && !imp.error);
+    const imps = hayImp ? calcularImportes(tareas, reps, imp) : null;
+    const conMO = hayImp && imp.mostrar_mano_obra && imps.vh != null;
+    const conRep = hayImp && imp.mostrar_precios_repuestos;
+    const tt = hayImp ? totalesImportes(imps, conMO, conRep) : null;
     const tituloAnterior = document.title;
     document.title = nroOT(ot.numero) + ' - ' + (u.dominio || '');
     st.limpiar.push(() => { document.title = tituloAnterior; window.removeEventListener('beforeprint', ajustarHoja); });
@@ -1057,6 +1181,12 @@
         <button class="btn btn-primario" onclick="window.print()">Imprimir / Guardar PDF</button>
         <span class="nota">Siempre sale en una sola hoja A4. Para PDF, elegí "Guardar como PDF" en la impresora.</span>
       </div>
+      ${hayImp && esOficina() ? `<div class="acciones no-imprimir" style="margin-bottom:12px;align-items:center">
+        <label class="check"><input type="checkbox" data-mostrar="mostrar_mano_obra" ${imp.mostrar_mano_obra ? 'checked' : ''}> Mostrar mano de obra</label>
+        <label class="check"><input type="checkbox" data-mostrar="mostrar_precios_repuestos" ${imp.mostrar_precios_repuestos ? 'checked' : ''}> Mostrar precios de repuestos</label>
+        ${imp.mostrar_mano_obra && imps.vh == null ? '<span class="nota" style="color:var(--rojo)">Falta el valor hora (Tempario): la mano de obra no sale.</span>' : ''}
+        ${conRep && imps.sinPrecio ? `<span class="nota" style="color:var(--rojo)">${imps.sinPrecio === 1 ? 'Hay 1 repuesto sin precio' : `Hay ${imps.sinPrecio} repuestos sin precio`}: ponéselo en la OT.</span>` : ''}
+      </div>` : ''}
       <div class="hoja-marco"><div class="hoja" id="hoja"><div class="hoja-contenido" id="hoja-contenido">
         <h1>ORDEN DE REPARACIÓN DE VEHÍCULO</h1>
         <div class="empresa">${esc(cfg.empresa)}</div>
@@ -1069,12 +1199,21 @@
           <tr><td>${esc(ot.cliente ? ot.cliente.nombre : '')}</td><td>${esc(u.marca ? u.marca.nombre : '')}</td><td>${esc(u.modelo ? u.modelo.nombre : '')}</td>
           <td>${esc(u.dominio)}</td><td>${esc(u.interno || '')}</td><td>${esc(u.chasis || '')}</td><td>${num(ot.km, 0)}</td><td>${esc(ot.tipo)}</td></tr></table>
         <div class="seccion">TRABAJO Y SERVICIO</div>
-        <table><tr><th style="width:6%">#</th><th>Descripción</th><th style="width:11%">MECÁNICO N°</th><th style="width:10%">CANT.</th><th style="width:12%">HS</th></tr>
-          ${tareas.map(t => `<tr><td>${t.renglon}</td><td>${esc(t.descripcion)}${t.butacas.length ? `<div style="font-size:.85em">Butacas: ${esc(resumenButacas(t.butacas))}</div>` : ''}</td><td style="text-align:center">${esc(nrosMecanicos(t))}</td><td style="text-align:right">${num(t.cantidad)}</td><td style="text-align:right">${num(t.horas_total)}</td></tr>`).join('') || '<tr><td colspan="5">—</td></tr>'}
-          <tr><th colspan="4" style="text-align:right">TOTAL HS</th><th style="text-align:right">${num(total)}</th></tr></table>
+        <table><tr><th style="width:6%">#</th><th>Descripción</th><th style="width:11%">MECÁNICO N°</th><th style="width:10%">CANT.</th><th style="width:${conMO ? 9 : 12}%">HS</th>${conMO ? '<th style="width:15%">IMPORTE</th>' : ''}</tr>
+          ${tareas.map(t => `<tr><td>${t.renglon}</td><td>${esc(t.descripcion)}${t.butacas.length ? `<div style="font-size:.85em">Butacas: ${esc(resumenButacas(t.butacas))}</div>` : ''}</td><td style="text-align:center">${esc(nrosMecanicos(t))}</td><td style="text-align:right">${num(t.cantidad)}</td><td style="text-align:right">${num(t.horas_total)}</td>${conMO ? `<td style="text-align:right;white-space:nowrap">${pesos(imps.tareasImp.get(t.id))}</td>` : ''}</tr>`).join('') || `<tr><td colspan="${conMO ? 6 : 5}">—</td></tr>`}
+          <tr><th colspan="4" style="text-align:right">TOTAL HS${conMO ? ` · VALOR HORA ${pesos(imps.vh)} SIN IVA` : ''}</th><th style="text-align:right">${num(total)}</th>${conMO ? `<th style="text-align:right;white-space:nowrap">${pesos(imps.mo)}</th>` : ''}</tr></table>
         <div class="seccion">REPUESTOS</div>
-        <table><tr><th style="width:24%">Código</th><th>Repuesto</th><th style="width:12%">Cantidad</th></tr>
-          ${reps.map(r => `<tr><td>${esc(r.codigo)}</td><td>${esc(r.repuesto ? r.repuesto.descripcion : '')}</td><td style="text-align:right">${num(r.cantidad)}</td></tr>`).join('') || '<tr><td colspan="3">—</td></tr>'}</table>
+        <table><tr><th style="width:${conRep ? 18 : 24}%">Código</th><th>Repuesto</th><th style="width:${conRep ? 9 : 12}%">Cantidad</th>${conRep ? '<th style="width:14%">PRECIO UNIT.</th><th style="width:15%">SUBTOTAL</th>' : ''}</tr>
+          ${reps.map(r => { const x = conRep ? imps.repsImp.get(r.id) : null;
+            return `<tr><td>${esc(r.codigo)}</td><td>${esc(r.repuesto ? r.repuesto.descripcion : '')}</td><td style="text-align:right">${num(r.cantidad)}</td>${conRep
+              ? `<td style="text-align:right;white-space:nowrap">${x.precio == null ? '—' : pesos(x.precio)}</td><td style="text-align:right;white-space:nowrap">${x.subtotal == null ? '—' : pesos(x.subtotal)}</td>` : ''}</tr>`; }).join('') || `<tr><td colspan="${conRep ? 5 : 3}">—</td></tr>`}
+          ${conRep && reps.length ? `<tr><th colspan="4" style="text-align:right">TOTAL REPUESTOS</th><th style="text-align:right;white-space:nowrap">${pesos(imps.rep)}</th></tr>` : ''}</table>
+        ${conMO || conRep ? `<table class="ot-totales">
+          ${conMO ? `<tr><th>Mano de obra</th><td>${pesos(imps.mo)}</td></tr>` : ''}
+          ${conRep ? `<tr><th>Repuestos</th><td>${pesos(imps.rep)}</td></tr>` : ''}
+          <tr><th>Subtotal sin IVA</th><td>${pesos(tt.neto)}</td></tr>
+          <tr><th>IVA ${IVA_OT} %</th><td>${pesos(tt.iva)}</td></tr>
+          <tr><th>TOTAL</th><td><b>${pesos(tt.total)}</b></td></tr></table>` : ''}
         ${ot.observaciones ? `<div class="seccion">OBSERVACIONES</div><div class="caja" style="min-height:0">${esc(ot.observaciones)}</div>` : ''}
         <div class="firmas">
           <div><div class="seccion">CHECK INGRESO · INSPECCIÓN VISUAL</div><div style="font-size:9pt">G: Golpe / R: Rayado / F: Faltante</div><div class="caja"></div></div>
@@ -1087,5 +1226,9 @@
     ajustarHoja();
     if (document.fonts && document.fonts.ready) document.fonts.ready.then(ajustarHoja);
     window.addEventListener('beforeprint', ajustarHoja);
+    on(main, 'change', '[data-mostrar]', async (ev, cb) => {
+      try { await Api.update('ordenes_trabajo', { id: 'eq.' + id }, { [cb.dataset.mostrar]: cb.checked }); navegar(); }
+      catch (e) { toast(errMsg(e), 'error'); cb.checked = !cb.checked; }
+    });
   }, ['OFICINA', 'ADMINISTRADOR', 'DEPOSITO']);
 })();

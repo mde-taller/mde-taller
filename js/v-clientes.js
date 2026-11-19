@@ -53,15 +53,24 @@
       toast(u ? 'Unidad guardada' : 'Unidad agregada'); return true;
     } catch (e) { toast(errMsg(e), 'error'); return false; }
   }
-  async function formCliente(c) {
+  // conRecargo: la base tiene el recargo de mano de obra (paso 28); solo el Administrador lo cambia.
+  async function formCliente(c, conRecargo) {
+    const recargo = conRecargo && esAdmin();
     const v = await modal({ titulo: c ? 'Editar cliente' : 'Nuevo cliente', textoOk: 'Guardar', campos: [
       { id: 'nombre', label: 'Cliente', valor: c ? c.nombre : '', obligatorio: true },
       { id: 'cuit', label: 'CUIT', valor: c ? c.cuit : '' }, { id: 'telefono', label: 'Teléfono', valor: c ? c.telefono : '' },
       { id: 'email', label: 'Email', valor: c ? c.email : '' }, { id: 'direccion', label: 'Dirección', valor: c ? c.direccion : '' },
-      { id: 'contacto', label: 'Contacto', valor: c ? c.contacto : '' }] });
+      { id: 'contacto', label: 'Contacto', valor: c ? c.contacto : '' }].concat(recargo ? [
+      { id: 'recargo', label: 'Recargo en la hora de mano de obra (%)', valor: c && Number(c.recargo_mano_obra) ? String(Number(c.recargo_mano_obra)).replace('.', ',') : '',
+        inputmode: 'decimal', ayuda: 'Se suma al valor hora en las OT de este cliente. Vacío = sin recargo. Ej.: 20' }] : []) });
     if (!v) return null;
     const fila = { nombre: v.nombre.trim().toUpperCase() };
     for (const k of ['cuit', 'telefono', 'email', 'direccion', 'contacto']) fila[k] = v[k].trim() || null;
+    if (recargo) {
+      const r = v.recargo.trim() === '' ? 0 : Number(v.recargo.trim().replace(',', '.'));
+      if (!(r >= 0 && r <= 500)) { toast('El recargo tiene que ser un número entre 0 y 500', 'error'); return null; }
+      fila.recargo_mano_obra = r;
+    }
     try {
       const r = c ? await Api.update('clientes', { id: 'eq.' + c.id }, fila) : await Api.insert('clientes', fila);
       toast('Cliente guardado'); return r[0];
@@ -69,8 +78,11 @@
   }
 
   ruta(/^#\/clientes$/, async main => {
+    const SEL_CLI = 'id,nombre,cuit,telefono,email,direccion,contacto';
+    let conRecargo = true;
     const [clientes, todas] = await Promise.all([
-      Api.select('clientes', { select: 'id,nombre,cuit,telefono,email,direccion,contacto', order: 'nombre' }),
+      Api.select('clientes', { select: SEL_CLI + ',recargo_mano_obra', order: 'nombre' })
+        .catch(() => { conRecargo = false; return Api.select('clientes', { select: SEL_CLI, order: 'nombre' }); }),
       Api.select('unidades', { select: 'cliente_id' })
     ]);
     const cantidad = {};
@@ -103,6 +115,7 @@
               <div class="dato"><div class="et">Email</div><div class="va">${esc(c.email || '—')}</div></div>
               <div class="dato"><div class="et">Contacto</div><div class="va">${esc(c.contacto || '—')}</div></div>
               <div class="dato"><div class="et">Dirección</div><div class="va">${esc(c.direccion || '—')}</div></div>
+              ${conRecargo && esAdmin() ? `<div class="dato"><div class="et">Recargo en la hora de mano de obra</div><div class="va">${Number(c.recargo_mano_obra) ? '+' + esc(String(Number(c.recargo_mano_obra)).replace('.', ',')) + ' %' : 'Sin recargo'}</div></div>` : ''}
             </div>
           </section>
           <div class="encabezado" style="margin-bottom:10px"><h2>Unidades (${unidades.length})</h2>
@@ -115,8 +128,8 @@
         </div>
       </div>`;
     on(main, 'click', '[data-cliente]', (ev, tr) => { clienteSel = Number(tr.dataset.cliente); navegar(); });
-    on(main, 'click', '[data-accion=nuevo-cliente]', async () => { const n = await formCliente(null); if (n) { clienteSel = n.id; navegar(); } });
-    on(main, 'click', '[data-accion=editar-cliente]', async () => { if (await formCliente(c)) navegar(); });
+    on(main, 'click', '[data-accion=nuevo-cliente]', async () => { const n = await formCliente(null, conRecargo); if (n) { clienteSel = n.id; navegar(); } });
+    on(main, 'click', '[data-accion=editar-cliente]', async () => { if (await formCliente(c, conRecargo)) navegar(); });
     on(main, 'click', '[data-accion=nueva-unidad]', async () => { if (await formUnidad(null, c.id)) navegar(); });
     on(main, 'click', '[data-editar-unidad]', async (ev, b) => { if (await formUnidad(unidades[Number(b.dataset.editarUnidad)])) navegar(); });
     // Eliminar (solo Administrador): no se puede si tiene órdenes de trabajo.

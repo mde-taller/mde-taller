@@ -509,3 +509,6 @@ tr.bien td { background: #F1F9F3; }
 .hoja .oc-leyenda { font-size: 9pt; margin-top: 2mm; }
 .hoja table.oc-tot { width: 80mm; flex: 0 0 auto; }
 .hoja .oc-tot td { text-align: right; white-space: nowrap; }
+/* Totales de la OT impresa (cuando se muestran precios) */
+.hoja table.ot-totales { width: 75mm; margin: 2mm 0 0 auto; }
+.hoja table.ot-totales td { text-align: right; white-space: nowrap; }

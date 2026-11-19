@@ -1,6 +1,6 @@
 // MDE · Taller — stock y repuestos (Depósito, Administrador; Oficina solo consulta).
 (() => {
-  const { esc, num, parseNum, nroOT, fechaHora, tiene, esAdmin, limpiarCodigo, errMsg, toast, confirmar, modal, ruta, on, navegar } = App;
+  const { esc, num, parseNum, nroOT, fechaHora, tiene, esAdmin, esOficina, limpiarCodigo, errMsg, toast, confirmar, modal, ruta, on, navegar } = App;
 
   let pestana = 'buscar', ultimaBusqueda = '', filtroIngresos = '';
   let lote = [{ codigo: '', cantidad: '', obs: '' }], loteRevisado = false, loteObsGeneral = '';
@@ -22,9 +22,31 @@
     return String(texto || '').split(/\r?\n/).map(l => l.split(/\t|;/).map(x => x.trim())).filter(c => c.some(Boolean));
   }
 
+  // ---------------- Lista de precios (paso 28 de la base) ----------------
+  const dinero = n => n == null || isNaN(n) ? '' : Number(n).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const parseDinero = s => {
+    s = String(s == null ? '' : s).replace(/\$/g, '').replace(/\s+/g, '');
+    if (!s) return null;
+    if (s.includes(',')) return Number(s.replace(/\./g, '').replace(',', '.'));
+    if (/^\d{1,3}(\.\d{3})+$/.test(s)) return Number(s.replace(/\./g, ''));
+    return Number(s);
+  };
+  // Map codigo -> precio; null si la base todavía no tiene la lista de precios.
+  async function preciosDeLista(codigos) {
+    try {
+      const mapa = new Map();
+      for (let i = 0; i < codigos.length; i += 100) {
+        const parte = codigos.slice(i, i + 100).map(c => '"' + String(c).replace(/"/g, '') + '"').join(',');
+        for (const f of await Api.select('lista_precios', { select: 'codigo,precio', codigo: 'in.(' + parte + ')' })) mapa.set(f.codigo, Number(f.precio));
+      }
+      return mapa;
+    } catch (e) { return null; }
+  }
+
   let primeraVez = true;
   ruta(/^#\/stock$/, async main => {
     const edita = tiene('DEPOSITO') || esAdmin();
+    const verPrecios = esOficina();
     const [pendientes, aEntregar] = await Promise.all([
       Api.select('pedidos_repuesto', { select: 'id', estado: 'eq.PENDIENTE' }),
       Api.select('repuestos_ot', { select: 'id', estado: 'eq.PENDIENTE' })]);
@@ -70,11 +92,15 @@
             filas = (await Api.select('stock_disponible', { select: 'codigo,descripcion,stock_inicial,entradas,salidas,ajustes,disponible',
                                                             codigo: 'eq.' + exacto.codigo })).concat(filas);
           }
+          // Precio de lista (sin IVA): lo ven y lo cambian Oficina y Administrador (paso 28 de la base).
+          const precios = verPrecios && filas.length ? await preciosDeLista(filas.map(f => f.codigo)) : null;
           res.innerHTML = filas.length ? `<div class="tabla-caja"><table><thead><tr><th>Código</th><th>Repuesto</th><th class="num">Inicial</th>
-            <th class="num">Entradas</th><th class="num">Salidas</th><th class="num">Ajustes</th><th class="num">Disponible</th>${edita ? '<th></th>' : ''}</tr></thead><tbody>
+            <th class="num">Entradas</th><th class="num">Salidas</th><th class="num">Ajustes</th><th class="num">Disponible</th>${precios ? '<th class="num">Precio de lista sin IVA</th>' : ''}${edita ? '<th></th>' : ''}</tr></thead><tbody>
             ${filas.map(f => `<tr><td>${esc(f.codigo)}</td><td>${esc(f.descripcion)}</td><td class="num">${num(f.stock_inicial)}</td>
               <td class="num">${num(f.entradas)}</td><td class="num">${num(f.salidas)}</td><td class="num">${num(f.ajustes)}</td>
               <td class="num"><b style="color:${Number(f.disponible) > 0 ? 'var(--verde)' : 'var(--rojo)'}">${num(f.disponible)}</b></td>
+              ${precios ? `<td class="num" style="white-space:nowrap">${precios.has(f.codigo) ? '$ ' + esc(dinero(precios.get(f.codigo))) : '<span class="nota">—</span>'}
+                <div><button class="btn-texto" data-precio-lista="${esc(f.codigo)}" data-desc="${esc(f.descripcion)}">${precios.has(f.codigo) ? 'Cambiar' : 'Poner precio'}</button></div></td>` : ''}
               ${edita ? `<td style="white-space:nowrap"><button class="btn-texto" data-modificar-rep="${esc(f.codigo)}" data-desc="${esc(f.descripcion)}" data-disp="${f.disponible}">Modificar</button>
                 <button class="btn-texto" style="color:var(--rojo)" data-eliminar-rep="${esc(f.codigo)}" data-desc="${esc(f.descripcion)}" data-disp="${f.disponible}">Eliminar</button></td>` : ''}</tr>`).join('')}
             </tbody></table></div>${filas.length >= 60 ? '<div class="nota" style="margin-top:6px">Se muestran los primeros 60. Afiná la búsqueda.</div>' : ''}`
@@ -82,6 +108,18 @@
         } catch (e) { res.innerHTML = `<div class="error-box">${esc(errMsg(e))}</div>`; }
       };
       document.getElementById('f-buscar').addEventListener('submit', ev => { ev.preventDefault(); buscar(); });
+      on(cont, 'click', '[data-precio-lista]', async (ev, b) => {
+        const cod = b.dataset.precioLista;
+        const actual = (await preciosDeLista([cod]) || new Map()).get(cod);
+        const v = await modal({ titulo: 'Precio de lista · ' + cod, textoOk: 'Guardar',
+          html: `<p class="nota">${esc(b.dataset.desc)}</p><p class="nota">Es el precio que proponen las OT para este repuesto (sin IVA). En cada OT se puede cambiar.${actual != null ? ' Dejalo vacío para sacarlo de la lista: las OT vuelven a usar el último costo de compra más el recargo.' : ''}</p>`,
+          campos: [{ id: 'precio', label: 'Precio de venta sin IVA', valor: dinero(actual), inputmode: 'decimal', obligatorio: actual == null }] });
+        if (!v) return;
+        const p = parseDinero(v.precio);
+        if (p !== null && !(p > 0)) return toast('El precio tiene que ser un número mayor a cero', 'error');
+        try { await Api.rpc('fijar_precio_lista', { p_codigo: cod, p_precio: p }); toast(p === null ? 'Se sacó de la lista de precios' : 'Precio de lista guardado'); buscar(); }
+        catch (e) { toast(errMsg(e), 'error'); }
+      });
       on(cont, 'click', '[data-modificar-rep]', async (ev, b) => {
         const cod = b.dataset.modificarRep, disp = Number(b.dataset.disp) || 0;
         const v = await modal({ titulo: 'Modificar repuesto ' + cod, textoOk: 'Guardar',

@@ -11,18 +11,61 @@
   };
   const filaVacia = () => ({ tipo: '', categoria: '', tarea: '', horas: '' });
 
+  // Valor hora y % de recargo de repuestos (paso 28 de la base). null si la base todavía no lo tiene.
+  async function preciosConfig() {
+    try {
+      const [cfgs, cls] = await Promise.all([
+        Api.select('configuracion', { select: 'clave,valor', clave: 'in.(valor_hora_mano_obra,recargo_repuestos)' }),
+        Api.select('clientes', { select: 'nombre,recargo_mano_obra', recargo_mano_obra: 'gt.0', order: 'nombre' })]);
+      const v = k => { const f = cfgs.find(c => c.clave === k); return f && f.valor != null && String(f.valor).trim() !== '' ? Number(String(f.valor).replace(',', '.')) : null; };
+      return { vh: v('valor_hora_mano_obra'), rec: v('recargo_repuestos'), clientes: cls };
+    } catch (e) { return null; }
+  }
+  const dinero = n => n == null || isNaN(n) ? '' : Number(n).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const parseDinero = s => {
+    s = String(s == null ? '' : s).replace(/\$/g, '').replace(/\s+/g, '');
+    if (!s) return null;
+    if (s.includes(',')) return Number(s.replace(/\./g, '').replace(',', '.'));
+    if (/^\d{1,3}(\.\d{3})+$/.test(s)) return Number(s.replace(/\./g, ''));
+    return Number(s);
+  };
+
   ruta(/^#\/tempario$/, async main => {
-    const [temp, cats] = await Promise.all([
+    const [temp, cats, pc] = await Promise.all([
       Api.select('tempario', { select: 'id,tipo,tarea,horas,activo,categoria_id,categoria:categorias_tempario(nombre)', order: 'tarea' }),
-      Api.select('categorias_tempario', { select: 'id,nombre', order: 'nombre' })
+      Api.select('categorias_tempario', { select: 'id,nombre', order: 'nombre' }),
+      preciosConfig()
     ]);
     if (!defCat && cats[0]) defCat = cats[0].nombre;
     main.innerHTML = `
       <div class="encabezado"><div><h1>Tempario</h1><div class="sub">${temp.length} tareas · lo que se carga acá queda disponible al instante para las OT</div></div></div>
+      <section class="tarjeta" style="margin-bottom:16px"><h2>Precios de la OT</h2>
+        ${pc ? `<form id="f-precios" class="fila-campos" style="align-items:flex-end">
+          <div class="campo"><label for="p-vh">Valor hora de mano de obra (sin IVA)</label><input id="p-vh" inputmode="decimal" value="${esc(dinero(pc.vh))}" placeholder="Ej.: 180.000"></div>
+          <div class="campo"><label for="p-rec">% de recargo sobre el último costo de compra</label><input id="p-rec" inputmode="decimal" value="${pc.rec == null ? '' : esc(String(pc.rec).replace('.', ','))}" placeholder="Ej.: 30"></div>
+          <div class="campo" style="flex:0 0 auto"><button class="btn btn-primario" type="submit">Guardar</button></div></form>
+        <div class="nota">Mano de obra = horas de tempario × valor hora.
+          ${pc.clientes.length ? 'Clientes con recargo en la hora: ' + pc.clientes.map(c => `${esc(c.nombre)} +${num(c.recargo_mano_obra)} %${pc.vh != null ? ' ($ ' + esc(dinero(Math.round(pc.vh * (1 + Number(c.recargo_mano_obra) / 100) * 100) / 100)) + ')' : ''}`).join(' · ') + ' (se cambia en Clientes).' : 'Ningún cliente tiene recargo en la hora (se pone en Clientes).'}</div>
+        <div class="nota">El precio de un repuesto en la OT sale de la lista de precios (Stock); si no tiene, del último costo de compra más este %. En cada OT se puede cambiar a mano.</div>`
+        : '<div class="nota">Para cargar el valor hora y los precios falta correr en Supabase el paso 28 de la base de datos (<b>base-de-datos/28_precios_ot.sql</b>).</div>'}
+      </section>
       <div class="pestanas"><button class="pestana ${vistaTemp === 'lista' ? 'activa' : ''}" data-v="lista">Ver y editar</button>
         <button class="pestana ${vistaTemp === 'lote' ? 'activa' : ''}" data-v="lote">Agregar servicios (varios a la vez)</button></div>
       <div id="t-cont"></div>`;
     on(main, 'click', '[data-v]', (ev, b) => { vistaTemp = b.dataset.v; navegar(); });
+    if (pc) document.getElementById('f-precios').addEventListener('submit', async ev => {
+      ev.preventDefault();
+      const vh = parseDinero(document.getElementById('p-vh').value);
+      const rec = parseDinero(document.getElementById('p-rec').value);
+      if (vh !== null && !(vh > 0)) return toast('El valor hora tiene que ser un número mayor a cero', 'error');
+      if (rec !== null && !(rec >= 0 && rec <= 1000)) return toast('El % de recargo no es válido', 'error');
+      try {
+        await Promise.all([
+          Api.update('configuracion', { clave: 'eq.valor_hora_mano_obra' }, { valor: vh === null ? null : String(Math.round(vh * 100) / 100) }),
+          Api.update('configuracion', { clave: 'eq.recargo_repuestos' }, { valor: rec === null ? null : String(Math.round(rec * 100) / 100) })]);
+        toast('Precios guardados'); navegar();
+      } catch (e) { toast(errMsg(e), 'error'); }
+    });
     const cont = document.getElementById('t-cont');
 
     if (vistaTemp === 'lista') {
