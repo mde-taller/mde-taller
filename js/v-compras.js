@@ -30,10 +30,16 @@ window.Compras = (() => {
     return Number(s);
   };
 
+  const textoPct = a => num(a, 3) + ' %';
+  const pctTexto = n => n == null || n === '' || isNaN(n) ? '' : String(Math.round(Number(n) * 1000) / 1000).replace('.', ',');
+
   // Totales como en una factura: subtotal por renglón redondeado y el IVA por alícuota sobre el neto
-  // de esa alícuota. Se calcula en centavos para que dé exactamente lo mismo que la base de datos.
+  // de esa alícuota. Las percepciones (% sobre el subtotal sin IVA o importe fijo) se suman al final.
+  // Se calcula en centavos para que dé exactamente lo mismo que la base de datos.
   const centavos = x => Math.round(Number(x || 0) * 100);
-  function totales(lineas) {
+  const centPerc = (p, netoCent) => p.tipo === 'IMPORTE' ? (p.importe > 0 ? centavos(p.importe) : 0)
+    : (p.alicuota > 0 ? Math.round(netoCent * Math.round(Number(p.alicuota) * 1000) / 100000) : 0);
+  function totales(lineas, percepciones) {
     const base = new Map(); let neto = 0;
     const subs = lineas.map(l => {
       const c = Math.round(centavos(l.cantidad) * centavos(l.precio_unitario) / 100);
@@ -45,11 +51,16 @@ window.Compras = (() => {
     const ivas = [...base.entries()].sort((a, b) => b[0] - a[0])
       .map(([alic, b]) => ({ alic, base: b / 100, cent: Math.round(b * Math.round(alic * 10) / 1000) }));
     const ivaCent = ivas.reduce((s, x) => s + x.cent, 0);
-    return { subs, neto: neto / 100, ivas: ivas.map(x => ({ alic: x.alic, base: x.base, iva: x.cent / 100 })), iva: ivaCent / 100, total: (neto + ivaCent) / 100 };
+    const percs = (percepciones || []).map(p => ({ concepto: p.concepto, tipo: p.tipo, alicuota: p.alicuota, cent: centPerc(p, neto) }));
+    const percCent = percs.reduce((s, x) => s + x.cent, 0);
+    return { subs, neto: neto / 100, ivas: ivas.map(x => ({ alic: x.alic, base: x.base, iva: x.cent / 100 })), iva: ivaCent / 100,
+             percs: percs.map(x => Object.assign(x, { importe: x.cent / 100 })), perc: percCent / 100, total: (neto + ivaCent + percCent) / 100 };
   }
+  const textoPerc = p => (String(p.concepto || '').trim() || 'Percepción') + (p.tipo === 'PORCENTAJE' && p.alicuota > 0 ? ' ' + textoPct(p.alicuota) : '');
   const htmlTotales = t => `<div class="oc-totales">
       <div><span>Subtotal sin IVA</span><b>${pesos(t.neto)}</b></div>
       ${t.ivas.filter(x => x.alic > 0).map(x => `<div><span>IVA ${textoIVA(x.alic)}</span><b>${pesos(x.iva)}</b></div>`).join('')}
+      ${t.percs.map(x => `<div><span>${esc(textoPerc(x))}</span><b>${pesos(x.importe)}</b></div>`).join('')}
       <div class="total"><span>Total</span><b>${pesos(t.total)}</b></div></div>`;
 
   function chipOC(o) {
@@ -88,8 +99,15 @@ window.Compras = (() => {
     'historial:ordenes_compra_historial!ordenes_compra_historial_oc_id_fkey(id,creado_en,tipo,detalle,usuario:usuarios!ordenes_compra_historial_usuario_id_fkey(nombre:nombre_visible))';
 
   async function cargarOC(id) {
-    const oc = (await Api.select('ordenes_compra', { select: SEL_OC, id: 'eq.' + id }))[0];
+    let oc;
+    try { oc = (await Api.select('ordenes_compra', { select: SEL_OC + SEL_PERC, id: 'eq.' + id }))[0]; }
+    catch (e) {
+      if (!faltaPerc(e)) throw e;
+      oc = (await Api.select('ordenes_compra', { select: SEL_OC, id: 'eq.' + id }))[0];
+      if (oc) oc.percepciones = null;          // la base todavía no tiene el paso 27
+    }
     if (!oc) return null;
+    if (oc.percepciones) oc.percepciones = oc.percepciones.sort((a, b) => a.renglon - b.renglon).map(percDesdeBase);
     oc.lineas = (oc.lineas || []).sort((a, b) => a.renglon - b.renglon);
     oc.recepciones = (oc.recepciones || []).sort((a, b) => new Date(a.creado_en) - new Date(b.creado_en));
     oc.historial = (oc.historial || []).sort((a, b) => a.id - b.id);
@@ -136,6 +154,116 @@ window.Compras = (() => {
       select: 'precio_unitario,alicuota_iva,oc:ordenes_compra!ordenes_compra_lineas_oc_id_fkey!inner(numero,estado,fecha,proveedor:proveedores!ordenes_compra_proveedor_id_fkey(nombre))',
       codigo: 'eq.' + codigo, precio_unitario: 'not.is.null', 'oc.estado': 'neq.ANULADA', order: 'id.desc', limit: 1 });
     return r[0] || null;
+  }
+
+  // ---------------- Percepciones y retenciones (paso 27 de la base) ----------------
+  // Lo que cobra el proveedor aparte del IVA: % sobre el subtotal sin IVA o un importe fijo. Se suma al total.
+  const TIPOS_PERC = [['PORCENTAJE', '% sobre subtotal sin IVA'], ['IMPORTE', 'Importe fijo $']];
+  const CONCEPTOS_BASE = ['PERCEPCIÓN IIBB', 'PERCEPCIÓN IVA', 'PERCEPCIÓN GANANCIAS', 'IMPUESTOS INTERNOS'];
+  const SEL_PERC = ',percepciones:ordenes_compra_percepciones!ordenes_compra_percepciones_oc_id_fkey(id,renglon,concepto,tipo,alicuota,importe)';
+  const faltaPerc = e => /percepciones/i.test((e && e.message) || '');
+  const AVISO_PERC = `<div class="nota" style="margin-top:12px">Para cargar percepciones y retenciones falta correr en Supabase el paso 27 de la base de datos
+    (<b>base-de-datos/27_percepciones_oc.sql</b>).</div>`;
+  const percDesdeBase = p => ({ concepto: p.concepto, tipo: p.tipo,
+    alicuota: p.alicuota == null ? null : Number(p.alicuota), importe: p.importe == null ? null : Number(p.importe) });
+  const percParaGuardar = lista => lista.map(p => ({ concepto: String(p.concepto || '').trim(), tipo: p.tipo,
+    alicuota: p.tipo === 'PORCENTAJE' ? p.alicuota : null, importe: p.tipo === 'IMPORTE' ? p.importe : null }));
+  const mismaPerc = (a, b) => JSON.stringify(percParaGuardar(a).map(p => Object.assign(p, { concepto: p.concepto.toUpperCase().replace(/\s+/g, ' ') })))
+                           === JSON.stringify(percParaGuardar(b).map(p => Object.assign(p, { concepto: p.concepto.toUpperCase().replace(/\s+/g, ' ') })));
+  function erroresPerc(lista) {
+    const err = [];
+    lista.forEach((p, i) => {
+      const n = `Percepción ${i + 1}${String(p.concepto || '').trim() ? ' (' + p.concepto.trim() + ')' : ''}`;
+      if (!String(p.concepto || '').trim()) err.push(`${n}: escribí el concepto (ej.: Percepción IIBB)`);
+      if (p.tipo === 'PORCENTAJE' && !(p.alicuota > 0 && p.alicuota <= 100)) err.push(`${n}: el porcentaje tiene que ser mayor a 0 y hasta 100`);
+      if (p.tipo === 'IMPORTE' && !(p.importe > 0)) err.push(`${n}: el importe tiene que ser mayor a cero`);
+    });
+    return err;
+  }
+  // Conceptos ya usados (para sugerirlos) y, de paso, si la base ya tiene el paso 27 (null = todavía no).
+  async function conceptosPerc() {
+    try {
+      const r = await Api.select('ordenes_compra_percepciones', { select: 'concepto', order: 'id.desc', limit: 300 });
+      return [...new Set([...r.map(x => x.concepto), ...CONCEPTOS_BASE])];
+    } catch (e) { if (faltaPerc(e)) return null; throw e; }
+  }
+  // Las percepciones en % de la última OC a ese proveedor (para proponerlas en una nueva).
+  async function percUltimaOC(provId, excluirOc) {
+    if (!provId) return null;
+    const r = await Api.select('ordenes_compra', {
+      select: 'id,numero,percepciones:ordenes_compra_percepciones!ordenes_compra_percepciones_oc_id_fkey!inner(renglon,concepto,tipo,alicuota,importe)',
+      proveedor_id: 'eq.' + provId, estado: 'neq.ANULADA', 'percepciones.tipo': 'eq.PORCENTAJE',
+      id: excluirOc ? 'neq.' + excluirOc : null, order: 'numero.desc', limit: 1 });
+    if (!r[0]) return null;
+    return { oc: r[0], lista: r[0].percepciones.sort((a, b) => a.renglon - b.renglon).map(percDesdeBase) };
+  }
+
+  // Panel para cargar las percepciones. "lista" se modifica en el lugar.
+  //   netoCent(): subtotal sin IVA actual en centavos · alCambiar(): después de cada cambio.
+  function panelPercepciones(caja, lista, { conceptos, netoCent, alCambiar, nota }) {
+    let sugerida = null;
+    caja.innerHTML = `
+      <h3 style="margin:18px 0 4px">Percepciones y retenciones</h3>
+      <div class="nota">Lo que cobra el proveedor aparte del IVA (percepción de IIBB, de IVA, impuestos internos…). Se suma al total.${nota ? ' ' + nota : ''}</div>
+      <div data-perc-sug></div>
+      <div class="tabla-caja oculto" data-perc-tabla style="margin-top:8px"><table><thead><tr><th>Concepto</th><th>Cómo se calcula</th><th class="num">% o $</th><th class="num">Importe</th><th></th></tr></thead>
+        <tbody data-perc-filas></tbody></table></div>
+      <div style="margin-top:10px"><button class="btn btn-chico" type="button" data-perc-agregar>+ Agregar percepción o retención</button></div>
+      <datalist id="dl-conceptos-perc">${(conceptos || CONCEPTOS_BASE).map(c => `<option value="${esc(c)}">`).join('')}</datalist>`;
+    const tb = caja.querySelector('[data-perc-filas]');
+    const importeTexto = p => pesos(centPerc(p, netoCent()) / 100);
+    function pintar() {
+      caja.querySelector('[data-perc-tabla]').classList.toggle('oculto', !lista.length);
+      tb.innerHTML = lista.map((p, i) => `<tr data-p="${i}">
+          <td style="min-width:220px"><input data-pc="concepto" list="dl-conceptos-perc" value="${esc(p.concepto || '')}" placeholder="Ej.: Percepción IIBB Neuquén" aria-label="Concepto de la percepción ${i + 1}"></td>
+          <td><select data-pc="tipo" style="width:auto" aria-label="Cómo se calcula la percepción ${i + 1}">${TIPOS_PERC.map(([v, t]) => `<option value="${v}" ${p.tipo === v ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select></td>
+          <td><input data-pc="valor" inputmode="decimal" style="width:120px;text-align:right" value="${esc(p.tipo === 'PORCENTAJE' ? pctTexto(p.alicuota) : precioTexto(p.importe))}"
+            placeholder="${p.tipo === 'PORCENTAJE' ? 'Ej.: 3' : '0,00'}" aria-label="${p.tipo === 'PORCENTAJE' ? 'Porcentaje' : 'Importe'} de la percepción ${i + 1}"></td>
+          <td class="num" data-pc-imp style="white-space:nowrap">${importeTexto(p)}</td>
+          <td><button class="btn-texto" type="button" data-pc-quitar="${i}" aria-label="Quitar la percepción ${i + 1}">Quitar</button></td></tr>`).join('');
+      pintarSugerencia();
+    }
+    function refrescar() {
+      tb.querySelectorAll('tr[data-p]').forEach(tr => { const p = lista[Number(tr.dataset.p)]; if (p) tr.querySelector('[data-pc-imp]').textContent = importeTexto(p); });
+    }
+    function pintarSugerencia() {
+      const s = caja.querySelector('[data-perc-sug]');
+      s.innerHTML = sugerida && !lista.length ? `<div class="aviso-box" style="margin:8px 0 0">La última OC a este proveedor (<a href="#/oc/${sugerida.oc.id}">${esc(nroOC(sugerida.oc.numero))}</a>) tenía:
+          ${esc(sugerida.lista.map(textoPerc).join(' · '))}. <button class="btn-texto" type="button" data-perc-usar>Usar las mismas</button></div>` : '';
+    }
+    const cambio = () => { refrescar(); alCambiar(); };
+    on(caja, 'click', '[data-perc-agregar]', () => {
+      lista.push({ concepto: '', tipo: 'PORCENTAJE', alicuota: null, importe: null });
+      pintar(); alCambiar();
+      const el = tb.querySelector(`tr[data-p="${lista.length - 1}"] [data-pc=concepto]`); if (el) el.focus();
+    });
+    on(caja, 'click', '[data-pc-quitar]', (ev, b) => { lista.splice(Number(b.dataset.pcQuitar), 1); pintar(); alCambiar(); });
+    on(caja, 'click', '[data-perc-usar]', () => { if (sugerida) { lista.push(...sugerida.lista.map(p => Object.assign({}, p))); pintar(); alCambiar(); } });
+    on(caja, 'input', '[data-pc=concepto], [data-pc=valor]', (ev, el) => {
+      const p = lista[Number(el.closest('tr').dataset.p)];
+      if (!p) return;
+      if (el.dataset.pc === 'concepto') p.concepto = el.value;
+      else if (p.tipo === 'PORCENTAJE') p.alicuota = el.value.trim() === '' ? null : parseNum(el.value);
+      else p.importe = el.value.trim() === '' ? null : parsePrecio(el.value);
+      cambio();
+    });
+    on(caja, 'change', '[data-pc=tipo]', (ev, el) => {
+      const p = lista[Number(el.closest('tr').dataset.p)];
+      if (!p) return;
+      p.tipo = el.value; p.alicuota = null; p.importe = null;     // cambia lo que significa el número: se vuelve a escribir
+      pintar(); alCambiar();
+      const v = tb.querySelector(`tr[data-p="${lista.indexOf(p)}"] [data-pc=valor]`); if (v) v.focus();
+    });
+    tb.addEventListener('focusout', ev => {
+      const el = ev.target;
+      if (!el.matches || !el.matches('[data-pc=valor]')) return;
+      const p = lista[Number(el.closest('tr').dataset.p)];
+      if (!p) return;
+      if (p.tipo === 'IMPORTE' && p.importe != null && !isNaN(p.importe)) el.value = precioTexto(p.importe);
+      if (p.tipo === 'PORCENTAJE' && p.alicuota != null && !isNaN(p.alicuota)) el.value = pctTexto(p.alicuota);
+    });
+    pintar();
+    return { refrescar, pintar, sugerir: x => { sugerida = x && x.lista.length ? x : null; pintarSugerencia(); } };
   }
 
   // ---------------- Proveedores ----------------
@@ -323,9 +451,11 @@ window.Compras = (() => {
 
   async function editor(main, oc, { otId, agregarPedidos }) {
     const SEL_OT = 'id,numero,estado,unidad:unidades(dominio,interno),cliente:clientes(nombre)';
-    const [provs, ots] = await Promise.all([
+    const [provs, ots, conceptos] = await Promise.all([
       Api.select('proveedores', { select: 'id,nombre,cuit,condicion_pago,activo', order: 'nombre' }),
-      Api.select('ordenes_trabajo', { select: SEL_OT, estado: 'not.in.(CERRADA,FACTURADA,PRUEBA)', order: 'numero.desc', limit: 1000 })]);
+      Api.select('ordenes_trabajo', { select: SEL_OT, estado: 'not.in.(CERRADA,FACTURADA,PRUEBA)', order: 'numero.desc', limit: 1000 }),
+      conceptosPerc()]);
+    const percOK = conceptos !== null;
     let otInicial = oc ? oc.ot : null;
     if (!oc && otId) otInicial = ots.find(o => o.id === otId) || (await Api.select('ordenes_trabajo', { select: SEL_OT, id: 'eq.' + otId }))[0] || null;
     const s = {
@@ -333,7 +463,8 @@ window.Compras = (() => {
       ot: otInicial,
       lineas: oc ? oc.lineas.map(l => ({ codigo: l.codigo || '', descripcion: l.descripcion, cantidad: Number(l.cantidad),
         precio_unitario: l.precio_unitario == null ? null : Number(l.precio_unitario), alicuota_iva: Number(l.alicuota_iva),
-        pedido_id: l.pedido_id || null, nota: l.pedido ? 'Pedido de ' + (l.pedido.pedidor ? l.pedido.pedidor.nombre : 'la OT') : '', ultimo: '' })) : []
+        pedido_id: l.pedido_id || null, nota: l.pedido ? 'Pedido de ' + (l.pedido.pedidor ? l.pedido.pedidor.nombre : 'la OT') : '', ultimo: '' })) : [],
+      percepciones: oc && oc.percepciones ? oc.percepciones.map(p => Object.assign({}, p)) : []
     };
     const volver = !oc && otId ? `#/ot/${otId}` : '#/compras';
     // Si la rechazaron, se muestra el motivo hasta que se vuelva a enviar.
@@ -371,6 +502,7 @@ window.Compras = (() => {
           <tbody id="e-lineas"></tbody></table></div>
         <div style="margin-top:12px"><button class="btn" data-accion="agregar-linea">+ Agregar renglón</button></div>
         <div class="nota" style="margin-top:8px">Con código de la lista, al recibirlo entra al stock${s.destino === 'OT' ? ' y queda para entregar a la OT' : ''}. Sin código (tornería, servicios, insumos sueltos) solo queda registrado como recibido.</div>
+        <div id="e-perc">${percOK ? '' : AVISO_PERC}</div>
         <div id="e-totales"></div>
       </section>
       <section class="tarjeta">
@@ -452,7 +584,18 @@ window.Compras = (() => {
       provAnterior = selProv.value;
       const p = provs.find(x => String(x.id) === selProv.value);
       if (p && p.condicion_pago && !v('e-cond')) document.getElementById('e-cond').value = p.condicion_pago;
+      sugerirPerc();
     });
+    // Si el proveedor ya tenía percepciones en la última OC, se ofrece usar las mismas.
+    let pedidoSug = 0;
+    async function sugerirPerc() {
+      if (!panelPerc) return;
+      const id = selProv.value && selProv.value !== '__nuevo' ? Number(selProv.value) : null;
+      const n = ++pedidoSug;
+      let prev = null;
+      try { prev = await percUltimaOC(id, oc ? oc.id : null); } catch (e) { prev = null; }
+      if (n === pedidoSug) panelPerc.sugerir(prev);
+    }
 
     // ----- Pedidos de repuesto de la OT -----
     let pedidosOT = [];
@@ -498,6 +641,7 @@ window.Compras = (() => {
     });
 
     // ----- Renglones -----
+    let panelPerc = null;
     function pintarLineas() {
       const t = totalesEstado();
       tb.innerHTML = s.lineas.length ? s.lineas.map((l, i) => `<tr data-i="${i}">
@@ -518,10 +662,11 @@ window.Compras = (() => {
       pintarTotales();
     }
     const totalesEstado = () => totales(s.lineas.map(l => ({ cantidad: l.cantidad > 0 ? l.cantidad : 0,
-      precio_unitario: l.precio_unitario > 0 ? l.precio_unitario : 0, alicuota_iva: l.alicuota_iva })));
+      precio_unitario: l.precio_unitario > 0 ? l.precio_unitario : 0, alicuota_iva: l.alicuota_iva })), s.percepciones);
     function pintarTotales() {
       const t = totalesEstado();
       tb.querySelectorAll('tr[data-i]').forEach(tr => { const c = tr.querySelector('[data-sub]'); if (c) c.textContent = pesos(t.subs[Number(tr.dataset.i)]); });
+      if (panelPerc) panelPerc.refrescar();
       const sinPrecio = s.lineas.filter(l => l.precio_unitario == null).length;
       document.getElementById('e-totales').innerHTML = s.lineas.length ? htmlTotales(t)
         + (sinPrecio ? `<div class="nota" style="text-align:right">${sinPrecio} renglón${sinPrecio === 1 ? '' : 'es'} sin precio: se puede guardar el borrador, pero para aprobarla tienen que tener precio.</div>` : '') : '';
@@ -592,11 +737,14 @@ window.Compras = (() => {
         if (!(l.cantidad > 0)) err.push(`Renglón ${i + 1}: la cantidad tiene que ser mayor a cero`);
         if (l.precio_unitario != null && !(l.precio_unitario >= 0)) err.push(`Renglón ${i + 1}: el precio no es válido`);
       });
+      if (percOK) err.push(...erroresPerc(s.percepciones));
       if (err.length) { mostrarError(err.join(' · ')); return null; }
       mostrarError('');
+      const datos = { proveedor_id: prov, destino: s.destino, ot_id: s.destino === 'OT' ? s.ot.id : null,
+                      entrega_estimada: v('e-ent') || null, condicion_pago: v('e-cond') || null, observaciones: v('e-obs') || null };
+      if (percOK) datos.percepciones = percParaGuardar(s.percepciones);
       return {
-        datos: { proveedor_id: prov, destino: s.destino, ot_id: s.destino === 'OT' ? s.ot.id : null,
-                 entrega_estimada: v('e-ent') || null, condicion_pago: v('e-cond') || null, observaciones: v('e-obs') || null },
+        datos,
         lineas: s.lineas.map(l => ({ codigo: l.codigo || null, descripcion: String(l.descripcion || '').trim() || null, cantidad: l.cantidad,
                                      precio_unitario: l.precio_unitario, alicuota_iva: l.alicuota_iva, pedido_id: l.pedido_id || null }))
       };
@@ -622,6 +770,12 @@ window.Compras = (() => {
     on(main, 'click', '[data-accion=aprobar]', () => guardar('aprobar_oc'));
     on(main, 'click', '[data-accion=anular]', async () => { if (await anular(oc)) navegar(); });
 
+    if (percOK) {
+      panelPerc = panelPercepciones(document.getElementById('e-perc'), s.percepciones, {
+        conceptos, netoCent: () => centavos(totalesEstado().neto), alCambiar: () => pintarTotales(),
+        nota: 'Si todavía no sabés cuánto te cobran, las podés cargar después, cuando llegue la factura.' });
+      if (!s.percepciones.length && selProv.value) sugerirPerc();
+    }
     pintarOT();
     pintarLineas();
     await cargarPedidos();
@@ -688,9 +842,12 @@ window.Compras = (() => {
   function vista(main, oc) {
     const admin = esAdmin(), arma = puedeArmar();
     const recibido = oc.recepciones.length > 0;
-    const t = totales(oc.lineas);
+    const t = totales(oc.lineas, oc.percepciones || []);           // lo guardado
     const p = oc.proveedor || {};
     const emitida = EMITIDAS.includes(oc.estado);
+    // Las percepciones se pueden cargar o corregir en cualquier momento (ej. cuando llega la factura), menos anulada.
+    const editaPerc = oc.percepciones != null && arma && oc.estado !== 'ANULADA';
+    const percs = (oc.percepciones || []).map(x => Object.assign({}, x));
     const entrega = tiene('DEPOSITO') || admin;
     const acciones = [`<a class="btn" href="#/oc/${oc.id}/imprimir">Imprimir / PDF</a>`];
     if (oc.estado === 'PARA APROBAR' && admin) acciones.push('<button class="btn btn-verde" data-accion="aprobar">Aprobar y emitir</button>', '<button class="btn btn-peligro" data-accion="rechazar">Rechazar</button>');
@@ -727,7 +884,10 @@ window.Compras = (() => {
                   <td style="white-space:nowrap">${textoIVA(l.alicuota_iva)}</td><td class="num" style="white-space:nowrap">${pesos(t.subs[i])}</td></tr>`;
               }).join('')}
             </tbody></table></div>
-            ${htmlTotales(t)}
+            <div id="v-perc">${oc.percepciones == null && arma && oc.estado !== 'ANULADA' ? AVISO_PERC : ''}</div>
+            ${editaPerc ? `<div class="acciones" style="margin-top:10px"><button class="btn btn-primario" data-accion="guardar-perc" disabled>Guardar percepciones</button>
+              <span class="nota" id="v-perc-estado"></span></div>` : ''}
+            <div id="v-totales">${htmlTotales(t)}</div>
           </section>
           ${emitida || recibido ? `<section class="tarjeta"><h2>Recepciones</h2>
             ${oc.recepciones.length ? oc.recepciones.map(r => `<div style="padding:8px 0;border-bottom:1px solid var(--linea)">
@@ -809,11 +969,36 @@ window.Compras = (() => {
       const ped = pedidos.get(Number(b.dataset.entregarPed));
       if (ped && await App.accionPedido('entregar', ped)) navegar();
     });
-    document.getElementById('f-oc-datos').addEventListener('submit', ev => {
-      ev.preventDefault();
+    // Factura, entrega, observaciones y percepciones se guardan juntos (para no perder lo escrito en la otra parte).
+    const guardarDatos = ok => {
       const val = id => document.getElementById(id).value.trim() || null;
-      hacer('modificar_oc_datos', { p_id: oc.id, p_datos: { nro_factura: val('d-fac'), entrega_estimada: val('d-ent'), observaciones: val('d-obs') } }, 'Datos guardados');
-    });
+      const datos = { nro_factura: val('d-fac'), entrega_estimada: val('d-ent'), observaciones: val('d-obs') };
+      if (editaPerc) {
+        const err = erroresPerc(percs);
+        if (err.length) return toast(err.join(' · '), 'error');
+        datos.percepciones = percParaGuardar(percs);
+      }
+      hacer('modificar_oc_datos', { p_id: oc.id, p_datos: datos }, ok);
+    };
+    document.getElementById('f-oc-datos').addEventListener('submit', ev => { ev.preventDefault(); guardarDatos('Datos guardados'); });
+    if (editaPerc) {
+      const btn = main.querySelector('[data-accion=guardar-perc]');
+      const netoCent = centavos(t.neto);
+      panelPercepciones(document.getElementById('v-perc'), percs, {
+        netoCent: () => netoCent,
+        alCambiar: () => {
+          const cambio = !mismaPerc(percs, oc.percepciones);
+          btn.disabled = !cambio;
+          document.getElementById('v-perc-estado').textContent = cambio ? 'Hay cambios sin guardar' : '';
+          document.getElementById('v-totales').innerHTML = htmlTotales(totales(oc.lineas, percs));
+        },
+        nota: emitida && !admin ? 'Si las cambiás en una OC ya aprobada, le llega un aviso al Administrador con el total nuevo.' : '' });
+      on(main, 'click', '[data-accion=guardar-perc]', () => guardarDatos('Percepciones guardadas'));
+      conceptosPerc().then(c => {        // sugerencias de conceptos ya usados
+        const dl = document.getElementById('dl-conceptos-perc');
+        if (c && dl) dl.innerHTML = c.map(x => `<option value="${esc(x)}">`).join('');
+      }).catch(() => {});
+    }
   }
 
   // ---------------- Impresión / PDF (una hoja A4) ----------------
@@ -835,7 +1020,7 @@ window.Compras = (() => {
     if (!oc) { main.innerHTML = '<div class="tarjeta">No se encontró la orden de compra.</div>'; return; }
     const e = Object.fromEntries(emp.map(c => [c.clave, c.valor || '']));
     const p = oc.proveedor || {};
-    const t = totales(oc.lineas);
+    const t = totales(oc.lineas, oc.percepciones || []);
     const valida = EMITIDAS.includes(oc.estado);
     const tituloAnterior = document.title;
     document.title = nroOC(oc.numero) + ' - ' + (p.nombre || '');
@@ -875,6 +1060,7 @@ window.Compras = (() => {
             <div class="oc-leyenda">Por favor, indicar el N° de orden de compra en el remito y en la factura.</div></div>
           <table class="oc-tot"><tr><th>Subtotal sin IVA</th><td>${pesos(t.neto)}</td></tr>
             ${t.ivas.filter(x => x.alic > 0).map(x => `<tr><th>IVA ${textoIVA(x.alic)}</th><td>${pesos(x.iva)}</td></tr>`).join('')}
+            ${t.percs.map(x => `<tr><th>${esc(textoPerc(x))}</th><td>${pesos(x.importe)}</td></tr>`).join('')}
             <tr><th>TOTAL</th><td><b>${pesos(t.total)}</b></td></tr></table>
         </div>
         <div class="firmas">
